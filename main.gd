@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.2"
+const LAUNCHER_VERSION := "1.3"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -587,7 +587,7 @@ func _remove_dir(path: String) -> void:
 
 func _launch() -> void:
 	var exe := ProjectSettings.globalize_path(_exe_path())
-	var pid := OS.create_process(exe, [])
+	var pid := OS.create_process(exe, ["--launcher=" + LAUNCHER_VERSION])
 	if pid <= 0:
 		status.text = "The game couldn't start. Try Settings → Repair."
 		return
