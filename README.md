@@ -5,6 +5,7 @@ Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
 - Reads https://floppamining.com/launcher/latest.json (game version, zip URL, size, sha256) and `/launcher/news.json`.
+- One launcher at a time (127.0.0.1:47732). The game sends "update" there when a new version is out (or starts the launcher with --update from the path in launcher_path.txt, which the launcher writes next to the game's login file).
 - Stays in the tray while the game runs (button shows IN GAME), keeps checking for updates; optional Windows notifications for new updates (Settings, off by default). Icons are PNG/ICO (SVG text can't be drawn by Godot: blank icons before 1.8).
 - Installs to `%APPDATA%\FloppaMining\game`, checks the sha256 of every download.
 - The game and launcher builds are in `builds/` (GitHub Releases can't be created from the AI sessions). Delete builds older than the last 2 to keep the repo small.

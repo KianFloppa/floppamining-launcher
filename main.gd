@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.8"
+const LAUNCHER_VERSION := "1.9"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
@@ -17,6 +17,7 @@ const ZIP_PATH := "user://download.zip"
 const CFG_PATH := "user://launcher.cfg"
 const API := "https://api.floppamining.com"
 const LOCK_PORT := 47731            # the game holds this local port while it runs (one game at a time)
+const SELF_PORT := 47732            # the launcher holds this one: one launcher at a time; the game sends "update" here
 const NAME_RULE := "Name: 3-16 letters (A-Z), numbers or _ (no spaces or other signs)"
 const PW_RULE := "Password: 8-64 characters, any signs allowed (not your name, nothing easy like 12345678)"
 
@@ -51,7 +52,26 @@ var _check_failed := false
 var _recheck_t := 600.0
 
 
+var _self_srv: TCPServer
+var _peers: Array = []
+
 func _ready() -> void:
+	# one launcher at a time: if one runs already, ask it to show itself and quit
+	if OS.has_feature("windows") and not OS.has_feature("editor"):
+		_self_srv = TCPServer.new()
+		if _self_srv.listen(SELF_PORT, "127.0.0.1") != OK:
+			_self_srv = null
+			var t := StreamPeerTCP.new()
+			if t.connect_to_host("127.0.0.1", SELF_PORT) == OK:
+				var end := Time.get_ticks_msec() + 800
+				while t.get_status() == StreamPeerTCP.STATUS_CONNECTING and Time.get_ticks_msec() < end:
+					t.poll()
+					OS.delay_msec(20)
+				t.put_data(("update\n" if _arg("--update") else "show\n").to_utf8_buffer())
+				t.poll()
+				OS.delay_msec(100)
+			get_tree().quit()
+			return
 	# a launcher update leaves the old exe next to us as .old: remove it
 	var old := OS.get_executable_path() + ".old"
 	if FileAccess.file_exists(old):
@@ -73,6 +93,9 @@ func _ready() -> void:
 	_apply_windows()
 	if _arg("--tray"):                 # started with Windows: stay in the tray until clicked
 		_to_tray.call_deferred()
+	_write_path()
+	if _arg("--update"):                # started by the game because a new version is out
+		_check_now.call_deferred()
 
 
 func _arg(a: String) -> bool:
@@ -624,7 +647,44 @@ func _start_download() -> void:
 		_fail("The download couldn't start (error %d)." % err)
 
 
+## The game finds us here when a new version is out (it starts us with --update). Same folder as its login file.
+func _write_path() -> void:
+	if not OS.has_feature("windows") or OS.has_feature("editor"):
+		return
+	var p := _game_cfg_path().get_base_dir()
+	DirAccess.make_dir_recursive_absolute(p)
+	var f := FileAccess.open(p.path_join("launcher_path.txt"), FileAccess.WRITE)
+	if f != null:
+		f.store_string(OS.get_executable_path())
+
+
+## Messages from the game or a second launcher: "show" or "update" (a new version is out, the game is closing).
+func _poll_self() -> void:
+	if _self_srv == null:
+		return
+	while _self_srv.is_connection_available():
+		_peers.append(_self_srv.take_connection())
+	for i in range(_peers.size() - 1, -1, -1):
+		var c: StreamPeerTCP = _peers[i]
+		c.poll()
+		if c.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			_peers.remove_at(i)
+			continue
+		var n := c.get_available_bytes()
+		if n <= 0:
+			continue
+		var msg := c.get_utf8_string(n).strip_edges()
+		_peers.remove_at(i)
+		c.disconnect_from_host()
+		_show_window()
+		if msg.begins_with("update"):
+			status.text = "A new version is out: it installs when the game has closed..."
+			_check_t = 0.5
+			_check_now()
+
+
 func _process(delta: float) -> void:
+	_poll_self()
 	_recheck_t -= delta
 	if _recheck_t <= 0.0:          # look for new versions every 10 minutes while the launcher is open
 		_recheck_t = 600.0
