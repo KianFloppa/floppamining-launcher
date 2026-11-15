@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.6"
+const LAUNCHER_VERSION := "1.7"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -68,6 +68,84 @@ func _ready() -> void:
 	_get_json(SITE + "/launcher/latest.json", _on_manifest)
 	_get_json(SITE + "/launcher/news.json", _on_news)
 	_load_account()
+	_setup_tray()
+	_apply_windows()
+	if _arg("--tray"):                 # started with Windows: stay in the tray until clicked
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+
+
+func _arg(a: String) -> bool:
+	return OS.get_cmdline_args().has(a) or OS.get_cmdline_user_args().has(a)
+
+
+# ---------- Windows: shortcuts, start with Windows, tray ----------
+var tray: StatusIndicator
+
+func _apply_windows() -> void:
+	if not OS.has_feature("windows") or OS.has_feature("editor"):
+		return
+	var exe := OS.get_executable_path().replace("'", "''")
+	var dir := exe.get_base_dir()
+	var ps := "$w = New-Object -ComObject WScript.Shell; "
+	for item in [["desktop", "[Environment]::GetFolderPath('Desktop')"], ["startmenu", "[Environment]::GetFolderPath('Programs')"]]:
+		var lnk := "(Join-Path %s 'Floppa Mining.lnk')" % item[1]
+		if bool(cfg.get_value("win", item[0], true)):
+			# (re)made every start, so it follows the launcher if it was moved
+			ps += "$s = $w.CreateShortcut(%s); $s.TargetPath = '%s'; $s.WorkingDirectory = '%s'; $s.IconLocation = '%s,0'; $s.Description = 'Floppa Mining Launcher'; $s.Save(); " % [lnk, exe, dir, exe]
+		else:
+			ps += "Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue; " % lnk
+	OS.execute_with_pipe("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], false)
+	var run_key := "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+	if bool(cfg.get_value("win", "autostart", false)):
+		OS.execute_with_pipe("reg", ["add", run_key, "/v", "FloppaMiningLauncher", "/t", "REG_SZ", "/d", "\"%s\" --tray" % OS.get_executable_path(), "/f"], false)
+	else:
+		OS.execute_with_pipe("reg", ["delete", run_key, "/v", "FloppaMiningLauncher", "/f"], false)
+
+
+func _setup_tray() -> void:
+	get_tree().set_auto_accept_quit(false)
+	tray = StatusIndicator.new()
+	tray.icon = load("res://icon.svg")
+	tray.tooltip = "Floppa Mining Launcher"
+	var menu := PopupMenu.new()
+	menu.add_item("Open", 0)
+	menu.add_item("Play", 1)
+	menu.add_item("Check for updates", 2)
+	menu.add_separator()
+	menu.add_item("Quit", 3)
+	menu.id_pressed.connect(_on_tray)
+	add_child(menu)
+	add_child(tray)
+	tray.menu = tray.get_path_to(menu)
+	tray.pressed.connect(func(button: int, _pos: Vector2i) -> void:
+		if button == MOUSE_BUTTON_LEFT:
+			_show_window())
+
+
+func _on_tray(id: int) -> void:
+	if id == 0:
+		_show_window()
+	elif id == 1:
+		_show_window()
+		_on_play()
+	elif id == 2:
+		_show_window()
+		_check_now()
+	elif id == 3:
+		get_tree().quit()
+
+
+func _show_window() -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	DisplayServer.window_move_to_foreground()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if bool(cfg.get_value("win", "tray_on_close", false)) and not busy:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)   # still checks for updates in the background
+		else:
+			get_tree().quit()
 
 
 # ---------- UI ----------
@@ -252,6 +330,14 @@ func _settings_menu() -> MenuButton:
 	p.add_theme_font_size_override("font_size", 16)
 	p.add_check_item("Close the launcher when the game starts", 0)
 	p.set_item_checked(0, bool(cfg.get_value("launcher", "close_on_play", true)))
+	p.add_check_item("Desktop shortcut", 10)
+	p.set_item_checked(p.get_item_index(10), bool(cfg.get_value("win", "desktop", true)))
+	p.add_check_item("Start menu shortcut", 11)
+	p.set_item_checked(p.get_item_index(11), bool(cfg.get_value("win", "startmenu", true)))
+	p.add_check_item("Start with Windows (in the tray)", 12)
+	p.set_item_checked(p.get_item_index(12), bool(cfg.get_value("win", "autostart", false)))
+	p.add_check_item("Closing the window keeps it in the tray", 13)
+	p.set_item_checked(p.get_item_index(13), bool(cfg.get_value("win", "tray_on_close", false)))
 	p.add_separator()
 	p.add_item("Check for updates", 4)
 	p.add_item("Open the game folder", 1)
@@ -265,6 +351,14 @@ func _settings_menu() -> MenuButton:
 
 
 func _on_setting(id: int, p: PopupMenu) -> void:
+	if id >= 10 and id <= 13:
+		var i := p.get_item_index(id)
+		p.set_item_checked(i, not p.is_item_checked(i))
+		var key: String = ["desktop", "startmenu", "autostart", "tray_on_close"][id - 10]
+		cfg.set_value("win", key, p.is_item_checked(i))
+		cfg.save(CFG_PATH)
+		_apply_windows()
+		return
 	match id:
 		0:
 			var i := p.get_item_index(0)
@@ -325,6 +419,8 @@ func _refresh() -> void:
 	else:
 		play_btn.text = "PLAY"
 		status.text = "Up to date. Ready to play"
+	if tray != null:
+		tray.tooltip = "Floppa Mining Launcher: " + status.text
 	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION) and not _self_updating
 
 
