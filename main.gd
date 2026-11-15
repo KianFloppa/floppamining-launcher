@@ -3,9 +3,11 @@ extends Control
 ## The website is the source of truth:
 ##   https://floppamining.com/launcher/latest.json  {game, url, size, sha256, exe, launcher, launcher_url}
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
-## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
+## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game, Linux: ~/.local/share/FloppaMining/game).
+## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
+## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "1.9"
+const LAUNCHER_VERSION := "2.0"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
@@ -54,10 +56,12 @@ var _recheck_t := 600.0
 
 var _self_srv: TCPServer
 var _peers: Array = []
+var is_linux := OS.get_name() == "Linux"
+var is_desktop_build := (OS.has_feature("windows") or OS.get_name() == "Linux") and not OS.has_feature("editor")
 
 func _ready() -> void:
 	# one launcher at a time: if one runs already, ask it to show itself and quit
-	if OS.has_feature("windows") and not OS.has_feature("editor"):
+	if is_desktop_build:
 		_self_srv = TCPServer.new()
 		if _self_srv.listen(SELF_PORT, "127.0.0.1") != OK:
 			_self_srv = null
@@ -91,7 +95,7 @@ func _ready() -> void:
 	_load_account()
 	_setup_tray()
 	_apply_windows()
-	if _arg("--tray"):                 # started with Windows: stay in the tray until clicked
+	if _arg("--tray"):                 # started with the PC: stay in the tray until clicked
 		_to_tray.call_deferred()
 	_write_path()
 	if _arg("--update"):                # started by the game because a new version is out
@@ -106,6 +110,9 @@ func _arg(a: String) -> bool:
 var tray: StatusIndicator
 
 func _apply_windows() -> void:
+	if is_linux and is_desktop_build:
+		_apply_linux()
+		return
 	if not OS.has_feature("windows") or OS.has_feature("editor"):
 		return
 	var exe := OS.get_executable_path().replace("'", "''")
@@ -124,6 +131,38 @@ func _apply_windows() -> void:
 		OS.execute_with_pipe("reg", ["add", run_key, "/v", "FloppaMiningLauncher", "/t", "REG_SZ", "/d", "\"%s\" --tray" % OS.get_executable_path(), "/f"], false)
 	else:
 		OS.execute_with_pipe("reg", ["delete", run_key, "/v", "FloppaMiningLauncher", "/f"], false)
+
+
+## Linux: the same options as .desktop files (desktop, app menu, autostart with --tray). Remade every start, so they
+## follow the launcher if it was moved.
+func _apply_linux() -> void:
+	var home := OS.get_environment("HOME")
+	if home == "":
+		return
+	var exe := OS.get_executable_path()
+	var icon := ProjectSettings.globalize_path("user://launcher_icon.png")
+	var img: Image = (load("res://tray.png") as Texture2D).get_image()
+	if img != null:
+		img.save_png(icon)
+	var entry := "[Desktop Entry]\nType=Application\nName=Floppa Launcher\nComment=Install, update and play Floppa Mining\nExec=\"%s\"%s\nIcon=%s\nTerminal=false\nCategories=Game;\nStartupWMClass=Floppa Launcher\n"
+	var desk := home.path_join("Desktop")
+	var out: Array = []
+	if OS.execute("xdg-user-dir", ["DESKTOP"], out) == 0 and out.size() > 0 and str(out[0]).strip_edges() != "":
+		desk = str(out[0]).strip_edges()
+	var files := [[desk.path_join("floppa-launcher.desktop"), "desktop", true, ""],
+		[home.path_join(".local/share/applications/floppa-launcher.desktop"), "startmenu", true, ""],
+		[home.path_join(".config/autostart/floppa-launcher.desktop"), "autostart", false, " --tray"]]
+	for f in files:
+		var path: String = f[0]
+		if bool(cfg.get_value("win", f[1], f[2])):
+			DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+			var w := FileAccess.open(path, FileAccess.WRITE)
+			if w != null:
+				w.store_string(entry % [exe, f[3], icon])
+				w.close()
+				OS.execute("chmod", ["+x", path])
+		elif FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
 
 
 func _setup_tray() -> void:
@@ -363,13 +402,13 @@ func _settings_menu() -> MenuButton:
 	p.add_theme_font_size_override("font_size", 16)
 	p.add_check_item("Quit the launcher when the game starts (off: it waits in the tray)", 0)
 	p.set_item_checked(0, bool(cfg.get_value("launcher", "quit_on_play", false)))
-	p.add_check_item("Windows notifications for new updates", 14)
+	p.add_check_item("Notifications for new updates" if is_linux else "Windows notifications for new updates", 14)
 	p.set_item_checked(p.get_item_index(14), bool(cfg.get_value("win", "notify", false)))
 	p.add_check_item("Desktop shortcut", 10)
 	p.set_item_checked(p.get_item_index(10), bool(cfg.get_value("win", "desktop", true)))
-	p.add_check_item("Start menu shortcut", 11)
+	p.add_check_item("App menu shortcut" if is_linux else "Start menu shortcut", 11)
 	p.set_item_checked(p.get_item_index(11), bool(cfg.get_value("win", "startmenu", true)))
-	p.add_check_item("Start with Windows (in the tray)", 12)
+	p.add_check_item("Start with the PC (in the tray)" if is_linux else "Start with Windows (in the tray)", 12)
 	p.set_item_checked(p.get_item_index(12), bool(cfg.get_value("win", "autostart", false)))
 	p.add_check_item("Closing the window keeps it in the tray", 13)
 	p.set_item_checked(p.get_item_index(13), bool(cfg.get_value("win", "tray_on_close", false)))
@@ -504,6 +543,17 @@ func _get_json(url: String, cb: Callable) -> void:
 
 
 func _on_manifest(d: Variant) -> void:
+	if is_linux and d is Dictionary and d.has("game"):
+		if d.get("linux") is Dictionary and (d.linux as Dictionary).has("url"):
+			d = (d as Dictionary).duplicate()
+			for k in d.linux:
+				d[k] = d.linux[k]
+		else:
+			manifest = {}
+			_check_failed = true
+			_refresh()
+			status.text = "There's no Linux build of this version yet. Try again later, or play in the browser: floppamining.com/play/"
+			return
 	if d is Dictionary and d.has("game") and d.has("url"):
 		manifest = d
 		_maybe_notify(d)
@@ -511,7 +561,7 @@ func _on_manifest(d: Variant) -> void:
 		cfg.save(CFG_PATH)
 		installed = _read_installed()
 		_check_failed = false
-		if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and OS.has_feature("windows") and not OS.has_feature("editor"):
+		if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and is_desktop_build:
 			_self_update()      # new launcher first: it restarts itself and then updates the game
 			return
 		_refresh()
@@ -649,7 +699,7 @@ func _start_download() -> void:
 
 ## The game finds us here when a new version is out (it starts us with --update). Same folder as its login file.
 func _write_path() -> void:
-	if not OS.has_feature("windows") or OS.has_feature("editor"):
+	if not is_desktop_build:
 		return
 	var p := _game_cfg_path().get_base_dir()
 	DirAccess.make_dir_recursive_absolute(p)
@@ -747,6 +797,8 @@ func _on_downloaded(res: int, code: int, _h: PackedStringArray, _b: PackedByteAr
 	if DirAccess.rename_absolute("user://game_new", GAME_DIR) != OK:
 		_fail("Couldn't finish installing. Is the game still open?")
 		return
+	if is_linux:   # zip files don't keep the "may run" flag
+		OS.execute("chmod", ["+x", ProjectSettings.globalize_path(_exe_path())])
 	var f := FileAccess.open(GAME_DIR + "/version.txt", FileAccess.WRITE)
 	f.store_string(str(manifest.game))
 	f.close()
@@ -1084,7 +1136,7 @@ func _page_account() -> void:
 
 
 # ---------- launcher self-update ----------
-# Windows lets a running exe be renamed: download the new launcher, rename ourselves to .old,
+# Windows and Linux let a running program be renamed: download the new launcher, rename ourselves to .old,
 # put the new exe in our place, start it and quit. The new launcher deletes the .old file.
 
 func _self_update() -> void:
@@ -1112,7 +1164,7 @@ func _self_update() -> void:
 		if ok:
 			var exe_name := ""
 			for f in z.get_files():
-				if f.to_lower().ends_with(".exe"):
+				if f.to_lower().ends_with(".x86_64" if is_linux else ".exe"):
 					exe_name = f
 			var data := z.read_file(exe_name) if exe_name != "" else PackedByteArray()
 			z.close()
@@ -1126,6 +1178,8 @@ func _self_update() -> void:
 				else:
 					w.store_buffer(data)
 					w.close()
+					if is_linux:
+						OS.execute("chmod", ["+x", me])
 					DirAccess.remove_absolute("user://launcher_update.zip")
 					OS.create_process(me, [])
 					get_tree().quit()
@@ -1168,6 +1222,9 @@ func _maybe_notify(d: Dictionary) -> void:
 
 ## A Windows toast through PowerShell (Windows 10 / 11, no extra programs). Text is cleaned so it can't break the command.
 func _toast(title: String, body: String) -> void:
+	if is_linux and is_desktop_build:
+		OS.execute_with_pipe("notify-send", ["--app-name=" + APP_NAME, title.left(120), body.left(180)], false)   # args, no shell
+		return
 	if not OS.has_feature("windows") or OS.has_feature("editor"):
 		print("[toast] ", title, ": ", body)
 		return

@@ -13,11 +13,14 @@ Download: https://floppamining.com/download/
 
 ## Release a new game version (for AI sessions)
 1. In the game repo: bump `config/version`, `godot --headless --path . --export-release "Windows" ../fmbuild/game/FloppaMining.exe`
-2. Zip it: `FloppaMining-<v>.zip` with `FloppaMining.exe` at the root.
+2. Zip it: `FloppaMining-<v>.zip` with `FloppaMining.exe` at the root. Linux (since 1.0.8): `--export-release "Linux" ../fmbuild/game-linux/FloppaMining.x86_64`, zip as `FloppaMining-<v>-linux.zip` (the launcher sets the run flag after unzipping).
 3. Put the zip in `builds/` of this repo, push.
-4. In floppatreasure-site: update `tools/launcher.json` (game, url, size, sha256), `python3 tools/build.py`, push.
+4. In floppatreasure-site: update `tools/launcher.json` (game, url, size, sha256, and the `linux` block: url, size, sha256), `python3 tools/build.py`, push.
    Also the browser version (same version!): in floppatreasure-game `python3 tools/web_release.py ../floppatreasure-site`, then `python3 tools/pages.py` + `tools/build.py` in the site and push (it replaces play/g/<old version>/).
    The launcher shows UPDATE as soon as the site is live.
 
 ## Test
 `godot --path . --script res://tests/shots.gd -- --site=http://127.0.0.1:8124 --out=/tmp/x` with a local copy of the launcher JSON files.
+
+## Linux (launcher 2.0)
+Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-linux.zip`. latest.json's `linux` block replaces url/size/sha256/exe/launcher_url/launcher_sha256 on Linux. Shortcuts are .desktop files (Desktop, ~/.local/share/applications, ~/.config/autostart with --tray), notifications use notify-send.
