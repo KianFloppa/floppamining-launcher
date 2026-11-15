@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.4"
+const LAUNCHER_VERSION := "1.5"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -253,6 +253,7 @@ func _settings_menu() -> MenuButton:
 	p.add_check_item("Close the launcher when the game starts", 0)
 	p.set_item_checked(0, bool(cfg.get_value("launcher", "close_on_play", true)))
 	p.add_separator()
+	p.add_item("Check for updates", 4)
 	p.add_item("Open the game folder", 1)
 	p.add_item("Repair (download the game again)", 2)
 	p.add_item("Uninstall the game", 3)
@@ -276,6 +277,8 @@ func _on_setting(id: int, p: PopupMenu) -> void:
 		2:
 			if not busy and not manifest.is_empty():
 				_start_download()
+		4:
+			_check_now()
 		3:
 			if not busy:
 				_remove_dir(GAME_DIR)
@@ -942,3 +945,14 @@ func _self_update() -> void:
 	_self_updating = false
 	busy = false
 	_refresh()          # shows the "new launcher" banner as a fallback
+
+
+## Settings -> Check for updates (also runs every 10 minutes and when PLAY is clicked)
+func _check_now() -> void:
+	if busy:
+		return
+	status.text = "Checking for updates..."
+	_get_json(SITE + "/launcher/latest.json", func(d: Variant) -> void:
+		_on_manifest(d)
+		if not busy and not manifest.is_empty() and installed == str(manifest.game) and not game_running:
+			status.text = "Everything is up to date (game %s, launcher %s)" % [installed, LAUNCHER_VERSION])
