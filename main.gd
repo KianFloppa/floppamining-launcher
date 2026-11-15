@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.5"
+const LAUNCHER_VERSION := "1.6"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -304,8 +304,8 @@ func _exe_path() -> String:
 func _refresh() -> void:
 	var online := str(manifest.get("game", ""))
 	ver_label.text = "Installed: %s   ·   Newest: %s   ·   Launcher %s" % [
-		("Prototype " + installed) if installed != "" else "nothing yet",
-		("Prototype " + online) if online != "" else "checking...", LAUNCHER_VERSION]
+		_vname(installed) if installed != "" else "nothing yet",
+		_vname(online) if online != "" else "checking...", LAUNCHER_VERSION]
 	if busy:
 		return
 	if game_running:
@@ -321,7 +321,7 @@ func _refresh() -> void:
 		status.text = "Can't reach floppamining.com. Check your internet, then click RETRY." if _check_failed else "Checking for updates..."
 	elif installed == "" or online != installed:
 		play_btn.text = "INSTALL" if installed == "" else "UPDATE"
-		status.text = "Prototype %s (%s)" % [online, _mb(int(manifest.get("size", 0)))]
+		status.text = "%s (%s)" % [_vname(online), _mb(int(manifest.get("size", 0)))]
 	else:
 		play_btn.text = "PLAY"
 		status.text = "Up to date. Ready to play"
@@ -336,6 +336,11 @@ func _newer(a: String, b: String) -> bool:
 		if x != y:
 			return x > y
 	return false
+
+
+## "1.0" -> "Open Beta 1.0"; old prototype numbers (15.x) -> "Prototype 15.x"
+func _vname(v: String) -> String:
+	return ("Prototype " if int(v.split(".")[0]) >= 10 else "Open Beta ") + v
 
 
 func _mb(bytes: int) -> String:
@@ -482,7 +487,7 @@ func _start_download() -> void:
 	play_btn.text = "..."
 	bar.visible = true
 	bar.value = 0
-	status.text = "Downloading Prototype %s..." % manifest.game
+	status.text = "Downloading %s..." % _vname(str(manifest.game))
 	if FileAccess.file_exists(ZIP_PATH):
 		DirAccess.remove_absolute(ZIP_PATH)
 	dl = HTTPRequest.new()
@@ -532,7 +537,7 @@ func _process(delta: float) -> void:
 		if dl_speed > 1000:
 			var s := int((total - got) / dl_speed)
 			left = " · %d:%02d left" % [s / 60, s % 60]
-		status.text = "Downloading Prototype %s: %s / %s · %.1f MB/s%s" % [manifest.game, _mb(got), _mb(total), dl_speed / 1048576.0, left]
+		status.text = "Downloading %s: %s / %s · %.1f MB/s%s" % [_vname(str(manifest.game)), _mb(got), _mb(total), dl_speed / 1048576.0, left]
 
 
 func _on_downloaded(res: int, code: int, _h: PackedStringArray, _b: PackedByteArray) -> void:
@@ -568,7 +573,7 @@ func _on_downloaded(res: int, code: int, _h: PackedStringArray, _b: PackedByteAr
 	busy = false
 	bar.visible = false
 	_refresh()
-	status.text = "Prototype %s is installed. Have fun!" % installed
+	status.text = "%s is installed. Have fun!" % _vname(installed)
 
 
 func _extract(zip: String, to: String) -> String:
