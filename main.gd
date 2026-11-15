@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.3"
+const LAUNCHER_VERSION := "1.4"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -448,10 +448,29 @@ func _on_play() -> void:
 			_refresh()
 			_get_json(SITE + "/launcher/latest.json", _on_manifest)
 		return
-	if installed != "" and str(manifest.game) == installed:
+	# check once more right before starting: a new game or launcher may be out since the last check
+	busy = true
+	play_btn.disabled = true
+	play_btn.text = "CHECKING"
+	status.text = "Checking for updates..."
+	var r := HTTPRequest.new()
+	r.timeout = 15
+	add_child(r)
+	r.request(SITE + "/launcher/latest.json?t=%d" % Time.get_unix_time_from_system())
+	var res: Array = await r.request_completed
+	r.queue_free()
+	busy = false
+	var d = JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8()) if int(res[0]) == HTTPRequest.RESULT_SUCCESS and int(res[1]) == 200 else null
+	if not (d is Dictionary and d.has("game") and d.has("url")):
+		_refresh()
+		status.text = "Couldn't check for updates. Check your internet and try again."
+		return
+	if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) or installed != str(d.game):
+		_on_manifest(d)          # updates the launcher / the game first; PLAY comes back when it's done
+		return
+	manifest = d
+	if not _is_game_running():
 		_launch()
-	else:
-		_start_download()
 
 
 func _start_download() -> void:
