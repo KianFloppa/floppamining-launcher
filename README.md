@@ -16,6 +16,7 @@ Download: https://floppamining.com/download/
 2. Zip it: `FloppaMining-<v>.zip` with `FloppaMining.exe` at the root.
 3. Put the zip in `builds/` of this repo, push.
 4. In floppatreasure-site: update `tools/launcher.json` (game, url, size, sha256), `python3 tools/build.py`, push.
+   Also the browser version (same version!): in floppatreasure-game `python3 tools/web_release.py ../floppatreasure-site`, then `python3 tools/pages.py` + `tools/build.py` in the site and push (it replaces play/g/<old version>/).
    The launcher shows UPDATE as soon as the site is live.
 
 ## Test
