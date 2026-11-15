@@ -1,0 +1,27 @@
+; Floppa Mining Launcher (Godot 4.8)
+
+config_version=5
+
+[application]
+
+config/name="Floppa Mining Launcher"
+config/version="1.0"
+run/main_scene="res://main.tscn"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="FloppaMining"
+config/features=PackedStringArray("4.8", "Mobile")
+config/icon="res://icon.svg"
+run/low_processor_mode=true
+
+[display]
+
+window/size/viewport_width=1100
+window/size/viewport_height=640
+window/size/resizable=false
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=false
