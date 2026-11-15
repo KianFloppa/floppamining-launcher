@@ -5,7 +5,7 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.1"
+const LAUNCHER_VERSION := "1.2"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -46,6 +46,8 @@ var dl_t := 0.0
 
 
 var _self_updating := false
+var _check_failed := false
+var _recheck_t := 600.0
 
 
 func _ready() -> void:
@@ -309,19 +311,17 @@ func _refresh() -> void:
 		status.text = "Floppa Mining is running"
 		return
 	play_btn.disabled = false
-	if installed == "" and online == "":
-		play_btn.text = "INSTALL"
-		play_btn.disabled = true
-		status.text = "Connecting to floppamining.com..."
-	elif installed == "":
-		play_btn.text = "INSTALL"
-		status.text = "Ready to install (%s)" % _mb(int(manifest.get("size", 0)))
-	elif online != "" and online != installed:
-		play_btn.text = "UPDATE"
-		status.text = "Prototype %s is out (%s)" % [online, _mb(int(manifest.get("size", 0)))]
+	# the game only starts after a successful update check (no playing old versions)
+	if manifest.is_empty():
+		play_btn.text = "RETRY" if _check_failed else "CHECKING"
+		play_btn.disabled = not _check_failed
+		status.text = "Can't reach floppamining.com. Check your internet, then click RETRY." if _check_failed else "Checking for updates..."
+	elif installed == "" or online != installed:
+		play_btn.text = "INSTALL" if installed == "" else "UPDATE"
+		status.text = "Prototype %s (%s)" % [online, _mb(int(manifest.get("size", 0)))]
 	else:
 		play_btn.text = "PLAY"
-		status.text = "Ready to play" if online != "" else "Ready to play (couldn't check for updates)"
+		status.text = "Up to date. Ready to play"
 	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION) and not _self_updating
 
 
@@ -360,10 +360,16 @@ func _on_manifest(d: Variant) -> void:
 		cfg.set_value("launcher", "exe", str(d.get("exe", "FloppaMining.exe")))
 		cfg.save(CFG_PATH)
 		installed = _read_installed()
+		_check_failed = false
 		if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and OS.has_feature("windows") and not OS.has_feature("editor"):
-			_self_update()
-	elif installed == "":
-		status.text = "Can't reach floppamining.com. Check your internet and restart the launcher."
+			_self_update()      # new launcher first: it restarts itself and then updates the game
+			return
+		_refresh()
+		if not busy and not game_running and installed != str(d.game):
+			_start_download()   # install / update the game right away
+		return
+	if manifest.is_empty():
+		_check_failed = true
 	_refresh()
 
 
@@ -436,10 +442,15 @@ func _news_card(item: Dictionary) -> Button:
 func _on_play() -> void:
 	if busy or _is_game_running():
 		return
-	var online := str(manifest.get("game", ""))
-	if installed != "" and (online == "" or online == installed):
+	if manifest.is_empty():
+		if _check_failed:
+			_check_failed = false
+			_refresh()
+			_get_json(SITE + "/launcher/latest.json", _on_manifest)
+		return
+	if installed != "" and str(manifest.game) == installed:
 		_launch()
-	elif not manifest.is_empty():
+	else:
 		_start_download()
 
 
@@ -468,6 +479,11 @@ func _start_download() -> void:
 
 
 func _process(delta: float) -> void:
+	_recheck_t -= delta
+	if _recheck_t <= 0.0:          # look for new versions every 10 minutes while the launcher is open
+		_recheck_t = 600.0
+		if not busy:
+			_get_json(SITE + "/launcher/latest.json", _on_manifest)
 	_check_t -= delta
 	if _check_t <= 0.0 and not busy:
 		_check_t = 1.5
