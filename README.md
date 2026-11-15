@@ -1,10 +1,11 @@
-# Floppa Mining Launcher
+# Floppa Launcher
 
-Small launcher for **Floppa Mining** (free to play, Windows). It installs the game, updates it and shows the newest patch notes.
+(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows). It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
 - Reads https://floppamining.com/launcher/latest.json (game version, zip URL, size, sha256) and `/launcher/news.json`.
+- Stays in the tray while the game runs (button shows IN GAME), keeps checking for updates; optional Windows notifications for new updates (Settings, off by default). Icons are PNG/ICO (SVG text can't be drawn by Godot: blank icons before 1.8).
 - Installs to `%APPDATA%\FloppaMining\game`, checks the sha256 of every download.
 - The game and launcher builds are in `builds/` (GitHub Releases can't be created from the AI sessions). Delete builds older than the last 2 to keep the repo small.
   The game's source code is private; only the builds are here.

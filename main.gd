@@ -1,11 +1,12 @@
 extends Control
-## Floppa Mining Launcher: installs, updates and starts the game. Shows the newest patch notes.
+## Floppa Launcher (was "Floppa Mining Launcher"): installs, updates and starts Floppa Mining. Shows the newest patch notes.
 ## The website is the source of truth:
 ##   https://floppamining.com/launcher/latest.json  {game, url, size, sha256, exe, launcher, launcher_url}
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.7"
+const LAUNCHER_VERSION := "1.8"
+const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
@@ -71,7 +72,7 @@ func _ready() -> void:
 	_setup_tray()
 	_apply_windows()
 	if _arg("--tray"):                 # started with Windows: stay in the tray until clicked
-		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+		_to_tray.call_deferred()
 
 
 func _arg(a: String) -> bool:
@@ -91,7 +92,7 @@ func _apply_windows() -> void:
 		var lnk := "(Join-Path %s 'Floppa Mining.lnk')" % item[1]
 		if bool(cfg.get_value("win", item[0], true)):
 			# (re)made every start, so it follows the launcher if it was moved
-			ps += "$s = $w.CreateShortcut(%s); $s.TargetPath = '%s'; $s.WorkingDirectory = '%s'; $s.IconLocation = '%s,0'; $s.Description = 'Floppa Mining Launcher'; $s.Save(); " % [lnk, exe, dir, exe]
+			ps += "$s = $w.CreateShortcut(%s); $s.TargetPath = '%s'; $s.WorkingDirectory = '%s'; $s.IconLocation = '%s,0'; $s.Description = 'Floppa Launcher'; $s.Save(); " % [lnk, exe, dir, exe]
 		else:
 			ps += "Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue; " % lnk
 	OS.execute_with_pipe("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], false)
@@ -105,8 +106,8 @@ func _apply_windows() -> void:
 func _setup_tray() -> void:
 	get_tree().set_auto_accept_quit(false)
 	tray = StatusIndicator.new()
-	tray.icon = load("res://icon.svg")
-	tray.tooltip = "Floppa Mining Launcher"
+	tray.icon = load("res://tray.png")   # raster: the old SVG had text, which Godot cannot draw (blank tray icon)
+	tray.tooltip = APP_NAME
 	var menu := PopupMenu.new()
 	menu.add_item("Open", 0)
 	menu.add_item("Play", 1)
@@ -136,14 +137,23 @@ func _on_tray(id: int) -> void:
 
 
 func _show_window() -> void:
+	get_window().show()
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_move_to_foreground()
+
+
+## Out of the way: only the tray icon stays (it keeps checking for updates). Falls back to minimised.
+func _to_tray() -> void:
+	if tray == null:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)
+		return
+	get_window().hide()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		if bool(cfg.get_value("win", "tray_on_close", false)) and not busy:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MINIMIZED)   # still checks for updates in the background
+			_to_tray()   # still checks for updates in the background
 		else:
 			get_tree().quit()
 
@@ -328,8 +338,10 @@ func _settings_menu() -> MenuButton:
 	var p := mb.get_popup()
 	p.add_theme_font_override("font", font)
 	p.add_theme_font_size_override("font_size", 16)
-	p.add_check_item("Close the launcher when the game starts", 0)
-	p.set_item_checked(0, bool(cfg.get_value("launcher", "close_on_play", true)))
+	p.add_check_item("Quit the launcher when the game starts (off: it waits in the tray)", 0)
+	p.set_item_checked(0, bool(cfg.get_value("launcher", "quit_on_play", false)))
+	p.add_check_item("Windows notifications for new updates", 14)
+	p.set_item_checked(p.get_item_index(14), bool(cfg.get_value("win", "notify", false)))
 	p.add_check_item("Desktop shortcut", 10)
 	p.set_item_checked(p.get_item_index(10), bool(cfg.get_value("win", "desktop", true)))
 	p.add_check_item("Start menu shortcut", 11)
@@ -359,11 +371,19 @@ func _on_setting(id: int, p: PopupMenu) -> void:
 		cfg.save(CFG_PATH)
 		_apply_windows()
 		return
+	if id == 14:
+		var i := p.get_item_index(14)
+		p.set_item_checked(i, not p.is_item_checked(i))
+		cfg.set_value("win", "notify", p.is_item_checked(i))
+		cfg.save(CFG_PATH)
+		if p.is_item_checked(i):
+			_toast(APP_NAME, "Notifications are on. You'll get one when a new Floppa Mining update is out.")
+		return
 	match id:
 		0:
 			var i := p.get_item_index(0)
 			p.set_item_checked(i, not p.is_item_checked(i))
-			cfg.set_value("launcher", "close_on_play", p.is_item_checked(i))
+			cfg.set_value("launcher", "quit_on_play", p.is_item_checked(i))
 			cfg.save(CFG_PATH)
 		1:
 			DirAccess.make_dir_recursive_absolute(GAME_DIR)
@@ -403,9 +423,11 @@ func _refresh() -> void:
 	if busy:
 		return
 	if game_running:
-		play_btn.text = "RUNNING"
+		play_btn.text = "IN GAME"
 		play_btn.disabled = true
-		status.text = "Floppa Mining is running"
+		status.text = "Floppa Mining is running. Updates install after you close it."
+		if tray != null:
+			tray.tooltip = APP_NAME + ": In game"
 		return
 	play_btn.disabled = false
 	# the game only starts after a successful update check (no playing old versions)
@@ -420,7 +442,7 @@ func _refresh() -> void:
 		play_btn.text = "PLAY"
 		status.text = "Up to date. Ready to play"
 	if tray != null:
-		tray.tooltip = "Floppa Mining Launcher: " + status.text
+		tray.tooltip = APP_NAME + ": " + ("In game" if game_running else status.text)
 	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION) and not _self_updating
 
 
@@ -461,6 +483,7 @@ func _get_json(url: String, cb: Callable) -> void:
 func _on_manifest(d: Variant) -> void:
 	if d is Dictionary and d.has("game") and d.has("url"):
 		manifest = d
+		_maybe_notify(d)
 		cfg.set_value("launcher", "exe", str(d.get("exe", "FloppaMining.exe")))
 		cfg.save(CFG_PATH)
 		installed = _read_installed()
@@ -616,6 +639,8 @@ func _process(delta: float) -> void:
 			if not run:
 				_load_account()       # the game may have logged in or out
 			_refresh()
+			if not run and not busy and not manifest.is_empty() and installed != str(manifest.game):
+				_start_download()     # an update came out while the game was open
 	if dl == null or not is_instance_valid(dl):
 		return
 	var got := dl.get_downloaded_bytes()
@@ -717,11 +742,14 @@ func _launch() -> void:
 	status.text = "Starting Floppa Mining..."
 	play_btn.disabled = true
 	_check_t = 4.0
-	if bool(cfg.get_value("launcher", "close_on_play", true)):
+	if bool(cfg.get_value("launcher", "quit_on_play", false)):
 		await get_tree().create_timer(1.5).timeout
 		get_tree().quit()
 	else:
-		await get_tree().create_timer(4.0).timeout
+		# Kian 2026-11-15: stay in the tray while the game runs (shows IN GAME, keeps checking for updates)
+		await get_tree().create_timer(2.0).timeout
+		_to_tray()
+		await get_tree().create_timer(2.0).timeout
 		_refresh()
 
 
@@ -1057,3 +1085,40 @@ func _check_now() -> void:
 		_on_manifest(d)
 		if not busy and not manifest.is_empty() and installed == str(manifest.game) and not game_running:
 			status.text = "Everything is up to date (game %s, launcher %s)" % [installed, LAUNCHER_VERSION])
+
+
+# ---------- Windows notifications (optional, off by default: Settings) ----------
+
+## One notification per new game version (and per new launcher version), only when the setting is on.
+func _maybe_notify(d: Dictionary) -> void:
+	if not bool(cfg.get_value("win", "notify", false)):
+		return
+	var g := str(d.get("game", ""))
+	var last := str(cfg.get_value("win", "notified", ""))
+	if last == "":                       # first check after turning it on: remember, don't notify old news
+		cfg.set_value("win", "notified", g)
+		cfg.save(CFG_PATH)
+		return
+	if g != "" and g != last and _newer(g, last):
+		cfg.set_value("win", "notified", g)
+		cfg.save(CFG_PATH)
+		var how := "It installs when you close the game." if game_running else "Open the launcher to play it."
+		_toast("Floppa Mining %s is out" % _vname(g), how)
+
+
+## A Windows toast through PowerShell (Windows 10 / 11, no extra programs). Text is cleaned so it can't break the command.
+func _toast(title: String, body: String) -> void:
+	if not OS.has_feature("windows") or OS.has_feature("editor"):
+		print("[toast] ", title, ": ", body)
+		return
+	var clean := func(t: String) -> String:
+		var o := ""
+		for ch in t:
+			if ch.unicode_at(0) >= 32 and not ch in ["'", '"', "`", "$", "<", ">", "&"]:
+				o += ch
+		return o.left(180)
+	var ps := "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; "
+	ps += "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+	ps += "$x = $t.GetElementsByTagName('text'); $x.Item(0).AppendChild($t.CreateTextNode('%s')) > $null; $x.Item(1).AppendChild($t.CreateTextNode('%s')) > $null; " % [clean.call(title), clean.call(body)]
+	ps += "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($t))"
+	OS.execute_with_pipe("powershell", ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps], false)
