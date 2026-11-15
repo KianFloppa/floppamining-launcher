@@ -5,14 +5,19 @@ extends Control
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
 ## The game goes to <user dir>/game (Windows: %APPDATA%\FloppaMining\game).
 
-const LAUNCHER_VERSION := "1.0"
+const LAUNCHER_VERSION := "1.1"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
+var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
 const BG := Color("#0b0b0d")
 const PANEL := Color(0.06, 0.06, 0.08, 0.86)
 const GAME_DIR := "user://game"
 const ZIP_PATH := "user://download.zip"
 const CFG_PATH := "user://launcher.cfg"
+const API := "https://api.floppamining.com"
+const LOCK_PORT := 47731            # the game holds this local port while it runs (one game at a time)
+const NAME_RULE := "Name: 3-16 letters (A-Z), numbers or _ (no spaces or other signs)"
+const PW_RULE := "Password: 8-64 characters, any signs allowed (not your name, nothing easy like 12345678)"
 
 var font: Font
 var manifest := {}
@@ -27,15 +32,32 @@ var ver_label: Label
 var news_box: HBoxContainer
 var banner: Button
 var dl: HTTPRequest
+var acc_btn: Button
+var acc_name := ""
+var acc_id := ""
+var acc_token := ""
+var game_running := false
+var _check_t := 0.0
+var overlay: Control
+var panel_box: VBoxContainer
 var dl_last := 0
 var dl_speed := 0.0
 var dl_t := 0.0
 
 
+var _self_updating := false
+
+
 func _ready() -> void:
+	# a launcher update leaves the old exe next to us as .old: remove it
+	var old := OS.get_executable_path() + ".old"
+	if FileAccess.file_exists(old):
+		DirAccess.remove_absolute(old)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--site="):
 			SITE = a.substr(7)
+		elif a.begins_with("--api="):
+			api = a.substr(6)
 	font = load("res://fonts/Sniglet-Regular.ttf")
 	cfg.load(CFG_PATH)
 	installed = _read_installed()
@@ -43,6 +65,7 @@ func _ready() -> void:
 	_refresh()
 	_get_json(SITE + "/launcher/latest.json", _on_manifest)
 	_get_json(SITE + "/launcher/news.json", _on_news)
+	_load_account()
 
 
 # ---------- UI ----------
@@ -93,7 +116,10 @@ func _build_ui() -> void:
 	sp.size_flags_horizontal = SIZE_EXPAND_FILL
 	top.add_child(sp)
 	top.add_child(_link("Patch notes", SITE + "/updates/"))
-	top.add_child(_link("Account", SITE + "/account/"))
+	acc_btn = _button("Log in", 17)
+	acc_btn.size_flags_vertical = SIZE_SHRINK_CENTER
+	acc_btn.pressed.connect(_open_account)
+	top.add_child(acc_btn)
 	top.add_child(_link("Website", SITE + "/"))
 	top.add_child(_settings_menu())
 
@@ -277,6 +303,11 @@ func _refresh() -> void:
 		("Prototype " + online) if online != "" else "checking...", LAUNCHER_VERSION]
 	if busy:
 		return
+	if game_running:
+		play_btn.text = "RUNNING"
+		play_btn.disabled = true
+		status.text = "Floppa Mining is running"
+		return
 	play_btn.disabled = false
 	if installed == "" and online == "":
 		play_btn.text = "INSTALL"
@@ -291,7 +322,7 @@ func _refresh() -> void:
 	else:
 		play_btn.text = "PLAY"
 		status.text = "Ready to play" if online != "" else "Ready to play (couldn't check for updates)"
-	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION)
+	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION) and not _self_updating
 
 
 func _newer(a: String, b: String) -> bool:
@@ -329,6 +360,8 @@ func _on_manifest(d: Variant) -> void:
 		cfg.set_value("launcher", "exe", str(d.get("exe", "FloppaMining.exe")))
 		cfg.save(CFG_PATH)
 		installed = _read_installed()
+		if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and OS.has_feature("windows") and not OS.has_feature("editor"):
+			_self_update()
 	elif installed == "":
 		status.text = "Can't reach floppamining.com. Check your internet and restart the launcher."
 	_refresh()
@@ -401,7 +434,7 @@ func _news_card(item: Dictionary) -> Button:
 # ---------- install / play ----------
 
 func _on_play() -> void:
-	if busy:
+	if busy or _is_game_running():
 		return
 	var online := str(manifest.get("game", ""))
 	if installed != "" and (online == "" or online == installed):
@@ -435,6 +468,15 @@ func _start_download() -> void:
 
 
 func _process(delta: float) -> void:
+	_check_t -= delta
+	if _check_t <= 0.0 and not busy:
+		_check_t = 1.5
+		var run := _is_game_running()
+		if run != game_running:
+			game_running = run
+			if not run:
+				_load_account()       # the game may have logged in or out
+			_refresh()
 	if dl == null or not is_instance_valid(dl):
 		return
 	var got := dl.get_downloaded_bytes()
@@ -535,6 +577,7 @@ func _launch() -> void:
 		return
 	status.text = "Starting Floppa Mining..."
 	play_btn.disabled = true
+	_check_t = 4.0
 	if bool(cfg.get_value("launcher", "close_on_play", true)):
 		await get_tree().create_timer(1.5).timeout
 		get_tree().quit()
@@ -548,3 +591,319 @@ func _fail(msg: String) -> void:
 	bar.visible = false
 	_refresh()
 	status.text = msg
+
+
+# ---------- one game at a time ----------
+
+## The game listens on 127.0.0.1:LOCK_PORT while it runs. If we can't take the port, the game is open.
+func _is_game_running() -> bool:
+	var t := TCPServer.new()
+	if t.listen(LOCK_PORT, "127.0.0.1") != OK:
+		return true
+	t.stop()
+	return false
+
+
+# ---------- account (shared with the game) ----------
+# The launcher writes the same login file the game reads (user://account.cfg of the game), so logging in here
+# means the game starts logged in, and logging out in the game logs out the launcher too.
+
+func _game_cfg_path() -> String:
+	# same folder the game uses: %APPDATA%\Godot\app_userdata\Floppa Mining (Linux: ~/.local/share/godot/...)
+	var g := "godot" if OS.get_name() == "Linux" else "Godot"
+	return OS.get_data_dir().path_join(g + "/app_userdata/Floppa Mining/account.cfg")
+
+
+func _load_account() -> void:
+	var cf := ConfigFile.new()
+	cf.load(_game_cfg_path())
+	var nid := str(cf.get_value("account", "id", ""))
+	var ntok := str(cf.get_value("account", "token", ""))
+	if nid == acc_id and ntok == acc_token and (acc_name != "" or nid == ""):
+		return
+	acc_id = nid
+	acc_token = ntok
+	acc_name = ""
+	_show_account()
+	if acc_id == "" or acc_token == "":
+		return
+	var r := await _api(HTTPClient.METHOD_GET, "/v1/me", {})
+	if r.code == 200:
+		acc_name = str(r.data.get("name", ""))
+	elif r.code == 401:
+		_save_game_login("", "")          # that login was logged out somewhere else
+	_show_account()
+
+
+func _save_game_login(id: String, token: String) -> void:
+	var path := _game_cfg_path()
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var cf := ConfigFile.new()
+	cf.load(path)
+	cf.set_value("account", "id", id)
+	cf.set_value("account", "token", token)
+	cf.save(path)
+	acc_id = id
+	acc_token = token
+	if id == "":
+		acc_name = ""
+
+
+func _show_account() -> void:
+	if acc_btn == null:
+		return
+	acc_btn.text = ("👤 " + acc_name) if acc_name != "" else ("👤 ..." if acc_id != "" else "Log in")
+
+
+func _api(method: int, path: String, body: Dictionary) -> Dictionary:
+	var r := HTTPRequest.new()
+	r.timeout = 20
+	add_child(r)
+	var h := PackedStringArray(["content-type: application/json"])
+	if acc_id != "" and acc_token != "":
+		h.append("authorization: Bearer %s.%s" % [acc_id, acc_token])
+	if r.request(api + path, h, method, "" if body.is_empty() and method == HTTPClient.METHOD_GET else JSON.stringify(body)) != OK:
+		r.queue_free()
+		return {"code": 0, "data": {}}
+	var res: Array = await r.request_completed
+	r.queue_free()
+	var d = JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8()) if int(res[0]) == HTTPRequest.RESULT_SUCCESS else null
+	return {"code": int(res[1]) if int(res[0]) == HTTPRequest.RESULT_SUCCESS else 0, "data": d if d is Dictionary else {}}
+
+
+func _err(r: Dictionary) -> String:
+	if r.code == 0:
+		return "Can't reach the server. Check your internet."
+	if r.code == 429:
+		return "Too many tries. Wait a few minutes."
+	var e := str(r.data.get("error", ""))
+	if e == "banned":
+		return "This account is banned: %s" % str(r.data.get("reason", ""))
+	return e if e != "" else "Server problem (%d)" % r.code
+
+
+func _open_account() -> void:
+	if overlay == null:
+		overlay = ColorRect.new()
+		(overlay as ColorRect).color = Color(0, 0, 0, 0.7)
+		overlay.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+		add_child(overlay)
+		var pc := PanelContainer.new()
+		pc.add_theme_stylebox_override("panel", _box(Color("#0e0e12"), 18, 1, GOLD.darkened(0.3)))
+		pc.custom_minimum_size = Vector2(460, 0)
+		pc.set_anchors_and_offsets_preset(PRESET_CENTER)
+		pc.grow_horizontal = GROW_DIRECTION_BOTH
+		pc.grow_vertical = GROW_DIRECTION_BOTH
+		overlay.add_child(pc)
+		var m := MarginContainer.new()
+		for side in ["left", "right", "top", "bottom"]:
+			m.add_theme_constant_override("margin_" + side, 22)
+		pc.add_child(m)
+		panel_box = VBoxContainer.new()
+		panel_box.add_theme_constant_override("separation", 10)
+		m.add_child(panel_box)
+	overlay.visible = true
+	if acc_id != "":
+		_page_account()
+	else:
+		_page_login()
+
+
+func _clear_page(title: String) -> void:
+	for c in panel_box.get_children():
+		c.queue_free()
+	var t := Label.new()
+	t.text = title
+	_style_label(t, 28, GOLD)
+	panel_box.add_child(t)
+
+
+func _field(ph: String, secret := false) -> LineEdit:
+	var e := LineEdit.new()
+	e.placeholder_text = ph
+	e.secret = secret
+	e.max_length = 64 if secret else 16
+	e.custom_minimum_size = Vector2(0, 44)
+	e.add_theme_font_override("font", font)
+	e.add_theme_font_size_override("font_size", 18)
+	e.add_theme_stylebox_override("normal", _box(Color("#18181d"), 10, 1))
+	e.add_theme_stylebox_override("focus", _box(Color("#18181d"), 10, 1, GOLD))
+	panel_box.add_child(e)
+	return e
+
+
+func _note(text: String, c := Color(1, 1, 1, 0.6), size := 14) -> Label:
+	var l := Label.new()
+	l.text = text
+	_style_label(l, size, c)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(416, 0)
+	panel_box.add_child(l)
+	return l
+
+
+func _pbutton(text: String, main := false) -> Button:
+	var b := _button(text, 18)
+	b.custom_minimum_size = Vector2(0, 46)
+	if main:
+		b.add_theme_stylebox_override("normal", _box(GOLD, 12, 0))
+		b.add_theme_stylebox_override("hover", _box(GOLD.lightened(0.12), 12, 0))
+		for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			b.add_theme_color_override(fc, Color("#1b1006"))
+	panel_box.add_child(b)
+	return b
+
+
+func _page_login() -> void:
+	_clear_page("Log in")
+	_note("Log in once here and the game starts logged in.")
+	var n := _field("Name (letters, numbers or _)")
+	var pw := _field("Password", true)
+	var msg := _note("", Color("#ff8a65"), 15)
+	var go := _pbutton("Log in", true)
+	var submit := func() -> void:
+		var name := n.text.strip_edges()
+		if name == "" or pw.text == "":
+			msg.text = "Type your name and password."
+			return
+		if not RegEx.create_from_string("^[A-Za-z0-9_]{3,16}$").search(name):
+			msg.text = "Names only have letters (A-Z), numbers and _ (no spaces or other signs)."
+			return
+		go.disabled = true
+		msg.text = "Logging in..."
+		var r := await _api(HTTPClient.METHOD_POST, "/v1/login", {"name": name, "password": pw.text})
+		go.disabled = false
+		if r.code != 200:
+			msg.text = _err(r)
+			return
+		_save_game_login(str(r.data.get("id", "")), str(r.data.get("token", "")))
+		acc_name = str(r.data.get("name", name))
+		_show_account()
+		overlay.visible = false
+	go.pressed.connect(submit)
+	pw.text_submitted.connect(func(_t: String) -> void: submit.call())
+	_pbutton("Create an account").pressed.connect(_page_signup)
+	_pbutton("Forgot your password? (website)").pressed.connect(func() -> void: OS.shell_open(SITE + "/account/"))
+	_pbutton("Close").pressed.connect(func() -> void: overlay.visible = false)
+	n.grab_focus.call_deferred()
+
+
+func _page_signup() -> void:
+	_clear_page("New account")
+	var n := _field("Name")
+	var pw := _field("Password", true)
+	var pw2 := _field("Password again", true)
+	_note(NAME_RULE + "\n" + PW_RULE)
+	var msg := _note("", Color("#ff8a65"), 15)
+	var go := _pbutton("Create account", true)
+	go.pressed.connect(func() -> void:
+		var name := n.text.strip_edges()
+		if not RegEx.create_from_string("^[A-Za-z0-9_]{3,16}$").search(name):
+			msg.text = "Names have 3-16 letters (A-Z), numbers or _ (no spaces or other signs)."
+			return
+		if pw.text.length() < 8:
+			msg.text = "The password needs at least 8 characters."
+			return
+		if pw.text != pw2.text:
+			msg.text = "The passwords are not the same."
+			return
+		go.disabled = true
+		msg.text = "Creating your account..."
+		var r := await _api(HTTPClient.METHOD_POST, "/v1/signup", {"name": name, "password": pw.text})
+		go.disabled = false
+		if r.code != 200:
+			msg.text = _err(r)
+			return
+		_save_game_login(str(r.data.get("id", "")), str(r.data.get("token", "")))
+		acc_name = str(r.data.get("name", name))
+		_show_account()
+		_page_code(str(r.data.get("recovery", ""))))
+	_note("No email needed. You get a recovery code: write it down, it's the only way to reset your password.")
+	_pbutton("Back").pressed.connect(_page_login)
+	n.grab_focus.call_deferred()
+
+
+func _page_code(code: String) -> void:
+	_clear_page("Your recovery code")
+	_note("Write it down or save it somewhere safe. It's the only way to reset your password, and it's shown only now.", Color(1, 1, 1, 0.8), 15)
+	var c := LineEdit.new()
+	c.text = code
+	c.editable = false
+	c.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	c.custom_minimum_size = Vector2(0, 56)
+	c.add_theme_font_size_override("font_size", 24)
+	c.add_theme_color_override("font_uneditable_color", GOLD)
+	c.add_theme_stylebox_override("read_only", _box(Color("#18181d"), 10, 1, GOLD))
+	panel_box.add_child(c)
+	_pbutton("Copy").pressed.connect(func() -> void: DisplayServer.clipboard_set(code))
+	_pbutton("I wrote it down", true).pressed.connect(func() -> void: overlay.visible = false)
+
+
+func _page_account() -> void:
+	_clear_page("Your account")
+	_note("Logged in as %s. The game starts logged in with this account." % (acc_name if acc_name != "" else "..."), Color.WHITE, 17)
+	_pbutton("Account page on floppamining.com").pressed.connect(func() -> void: OS.shell_open(SITE + "/account/"))
+	var out := _pbutton("Log out")
+	out.disabled = _is_game_running()
+	if out.disabled:
+		_note("Close the game to log out.")
+	out.pressed.connect(func() -> void:
+		out.disabled = true
+		await _api(HTTPClient.METHOD_POST, "/v1/logout", {})
+		_save_game_login("", "")
+		_show_account()
+		overlay.visible = false)
+	_pbutton("Close").pressed.connect(func() -> void: overlay.visible = false)
+
+
+# ---------- launcher self-update ----------
+# Windows lets a running exe be renamed: download the new launcher, rename ourselves to .old,
+# put the new exe in our place, start it and quit. The new launcher deletes the .old file.
+
+func _self_update() -> void:
+	var url := str(manifest.get("launcher_url", ""))
+	if url == "" or busy:
+		return
+	_self_updating = true
+	busy = true
+	play_btn.disabled = true
+	status.text = "Updating the launcher to %s..." % manifest.launcher
+	var r := HTTPRequest.new()
+	r.download_file = "user://launcher_update.zip"
+	r.use_threads = true
+	add_child(r)
+	r.request(url)
+	var res: Array = await r.request_completed
+	r.queue_free()
+	var ok := int(res[0]) == HTTPRequest.RESULT_SUCCESS and int(res[1]) == 200
+	var want := str(manifest.get("launcher_sha256", "")).to_lower()
+	if ok and want != "" and FileAccess.get_sha256("user://launcher_update.zip") != want:
+		ok = false
+	if ok:
+		var z := ZIPReader.new()
+		ok = z.open("user://launcher_update.zip") == OK
+		if ok:
+			var exe_name := ""
+			for f in z.get_files():
+				if f.to_lower().ends_with(".exe"):
+					exe_name = f
+			var data := z.read_file(exe_name) if exe_name != "" else PackedByteArray()
+			z.close()
+			var me := OS.get_executable_path()
+			ok = data.size() > 1000000 and DirAccess.rename_absolute(me, me + ".old") == OK
+			if ok:
+				var w := FileAccess.open(me, FileAccess.WRITE)
+				if w == null:
+					DirAccess.rename_absolute(me + ".old", me)
+					ok = false
+				else:
+					w.store_buffer(data)
+					w.close()
+					DirAccess.remove_absolute("user://launcher_update.zip")
+					OS.create_process(me, [])
+					get_tree().quit()
+					return
+	DirAccess.remove_absolute("user://launcher_update.zip")
+	_self_updating = false
+	busy = false
+	_refresh()          # shows the "new launcher" banner as a fallback
