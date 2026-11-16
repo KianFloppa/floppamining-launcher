@@ -9,6 +9,7 @@ Download: https://floppamining.com/download/
 - Stays in the tray while the game runs (button shows IN GAME), keeps checking for updates; optional Windows notifications for new updates (Settings, off by default). Icons are PNG/ICO (SVG text can't be drawn by Godot: blank icons before 1.8).
 - Installs to `%APPDATA%\FloppaMining\game`, checks the sha256 of every download.
 - The game and launcher builds are in `builds/` (GitHub Releases can't be created from the AI sessions). Delete builds older than the last 2 to keep the repo small.
+- **Repo size (2026-11-16):** git keeps every deleted zip in the history (the repo had grown to 4.3 GB; GitHub blocks at 5 GB). It was cleaned with `git filter-repo --path-glob 'builds/*.zip' --invert-paths`, the current zips re-added, force-pushed (284 MB). Check `du -sh .git` after a release; above 1 GB, clean the same way (Kian OK'd it). Fresh clones only after a cleanup.
   The game's source code is private; only the builds are here.
 
 ## Release a new game version (for AI sessions)
