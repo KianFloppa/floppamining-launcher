@@ -7,7 +7,7 @@ extends Control
 ## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
 ## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "2.3"
+const LAUNCHER_VERSION := "2.4"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
