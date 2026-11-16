@@ -7,7 +7,7 @@ extends Control
 ## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
 ## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "2.2"
+const LAUNCHER_VERSION := "2.3"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
@@ -168,6 +168,8 @@ func _apply_linux() -> void:
 
 func _setup_tray() -> void:
 	get_tree().set_auto_accept_quit(false)
+	# the window's own close signal too (2.3): on some PCs the X never reached _notification
+	get_window().close_requested.connect(func() -> void: _notification(NOTIFICATION_WM_CLOSE_REQUEST))
 	tray = StatusIndicator.new()
 	tray.icon = load("res://tray.png")   # raster: the old SVG had text, which Godot cannot draw (blank tray icon)
 	tray.tooltip = APP_NAME
@@ -214,11 +216,15 @@ func _to_tray() -> void:
 	get_window().hide()
 
 
+var _closing := false
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if _closing:
+			return
 		if bool(cfg.get_value("win", "tray_on_close", false)) and not busy:
 			_to_tray()   # still checks for updates in the background
 		else:
+			_closing = true
 			_quit_now()
 
 
@@ -230,7 +236,7 @@ func _quit_now() -> void:
 	if tray != null:
 		tray.visible = false
 	get_tree().quit()
-	await get_tree().create_timer(1.5, true, false, true).timeout
+	await get_tree().create_timer(0.6, true, false, true).timeout
 	OS.kill(OS.get_process_id())
 
 
