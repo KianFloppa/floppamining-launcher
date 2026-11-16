@@ -7,7 +7,7 @@ extends Control
 ## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
 ## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "2.0"
+const LAUNCHER_VERSION := "2.1"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
@@ -58,6 +58,7 @@ var _self_srv: TCPServer
 var _peers: Array = []
 var is_linux := OS.get_name() == "Linux"
 var is_desktop_build := (OS.has_feature("windows") or OS.get_name() == "Linux") and not OS.has_feature("editor")
+var edition := "Linux" if OS.get_name() == "Linux" else "Windows"   ## shown in the top bar, version line, title and tray
 
 func _ready() -> void:
 	# one launcher at a time: if one runs already, ask it to show itself and quit
@@ -170,6 +171,7 @@ func _setup_tray() -> void:
 	tray = StatusIndicator.new()
 	tray.icon = load("res://tray.png")   # raster: the old SVG had text, which Godot cannot draw (blank tray icon)
 	tray.tooltip = APP_NAME
+	DisplayServer.window_set_title("%s · %s edition" % [APP_NAME, edition])
 	var menu := PopupMenu.new()
 	menu.add_item("Open", 0)
 	menu.add_item("Play", 1)
@@ -260,7 +262,7 @@ func _build_ui() -> void:
 	title.add_theme_constant_override("outline_size", 8)
 	top.add_child(title)
 	var tag := Label.new()
-	tag.text = "FREE TO PLAY"
+	tag.text = "FREE TO PLAY  ·  %s EDITION" % edition.to_upper()
 	_style_label(tag, 14, Color(1, 1, 1, 0.7))
 	tag.size_flags_vertical = SIZE_SHRINK_CENTER
 	top.add_child(tag)
@@ -418,7 +420,7 @@ func _settings_menu() -> MenuButton:
 	p.add_item("Repair (download the game again)", 2)
 	p.add_item("Uninstall the game", 3)
 	p.add_separator()
-	p.add_item("Launcher %s" % LAUNCHER_VERSION, 9)
+	p.add_item("Launcher %s · %s edition" % [LAUNCHER_VERSION, edition], 9)
 	p.set_item_disabled(p.get_item_index(9), true)
 	p.id_pressed.connect(_on_setting.bind(p))
 	return mb
@@ -479,9 +481,9 @@ func _exe_path() -> String:
 
 func _refresh() -> void:
 	var online := str(manifest.get("game", ""))
-	ver_label.text = "Installed: %s   ·   Newest: %s   ·   Launcher %s" % [
+	ver_label.text = "Installed: %s   ·   Newest: %s   ·   Launcher %s (%s)" % [
 		_vname(installed) if installed != "" else "nothing yet",
-		_vname(online) if online != "" else "checking...", LAUNCHER_VERSION]
+		_vname(online) if online != "" else "checking...", LAUNCHER_VERSION, edition]
 	if busy:
 		return
 	if game_running:
