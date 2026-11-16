@@ -7,7 +7,7 @@ extends Control
 ## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
 ## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "2.1"
+const LAUNCHER_VERSION := "2.2"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
@@ -197,7 +197,7 @@ func _on_tray(id: int) -> void:
 		_show_window()
 		_check_now()
 	elif id == 3:
-		get_tree().quit()
+		_quit_now()
 
 
 func _show_window() -> void:
@@ -219,7 +219,19 @@ func _notification(what: int) -> void:
 		if bool(cfg.get_value("win", "tray_on_close", false)) and not busy:
 			_to_tray()   # still checks for updates in the background
 		else:
-			get_tree().quit()
+			_quit_now()
+
+
+## Close for real. A running download thread or the tray icon must never keep the process alive (Kian 2026-11-16:
+## the X did nothing, only Task Manager closed it).
+func _quit_now() -> void:
+	if dl != null:
+		dl.cancel_request()
+	if tray != null:
+		tray.visible = false
+	get_tree().quit()
+	await get_tree().create_timer(1.5, true, false, true).timeout
+	OS.kill(OS.get_process_id())
 
 
 # ---------- UI ----------
@@ -858,7 +870,7 @@ func _launch() -> void:
 	_check_t = 4.0
 	if bool(cfg.get_value("launcher", "quit_on_play", false)):
 		await get_tree().create_timer(1.5).timeout
-		get_tree().quit()
+		_quit_now()
 	else:
 		# Kian 2026-11-15: stay in the tray while the game runs (shows IN GAME, keeps checking for updates)
 		await get_tree().create_timer(2.0).timeout
