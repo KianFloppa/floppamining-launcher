@@ -1,6 +1,6 @@
 # Floppa Launcher
 
-(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows). It installs the game, updates it and shows the newest patch notes.
+(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows) and, since 2.5, **Floppa Felony** (public test): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
@@ -25,3 +25,9 @@ Download: https://floppamining.com/download/
 
 ## Linux (launcher 2.0)
 Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-linux.zip`. latest.json's `linux` block replaces url/size/sha256/exe/launcher_url/launcher_sha256 on Linux. Shortcuts are .desktop files (Desktop, ~/.local/share/applications, ~/.config/autostart with --tray), notifications use notify-send.
+
+## Floppa Felony (launcher 2.5, 2026-11-17)
+- Manifest `floppamining.com/launcher/felony.json` {game, url, size, sha256, exe} and news `/launcher/felony_news.json` (full links to felony.floppaland.com), both in the floppatreasure-site repo.
+- Installed in `user://felony` (Mining stays in `user://game`). Felony has no lock port: the launcher watches the process it started.
+- Release: in floppaheist-game bump `config/version`, `godot --headless --path . --export-release "Windows Desktop" /tmp/felbuild/FloppaFelony.exe`, zip `FloppaFelony.exe` + `FloppaFelony.pck` as `builds/FloppaFelony-<v>.zip`, update felony.json (size, sha256) and felony_news.json. No Linux build yet (the launcher says so on Linux).
+- Test: `tests/games_test.gd` (local copy of the site with latest.json + felony.json, see its header).

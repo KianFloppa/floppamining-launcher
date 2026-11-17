@@ -1,5 +1,8 @@
 extends Control
-## Floppa Launcher (was "Floppa Mining Launcher"): installs, updates and starts Floppa Mining. Shows the newest patch notes.
+## Floppa Launcher (was "Floppa Mining Launcher"): installs, updates and starts the Floppa games. Shows the newest patch notes.
+## 2.5 (2026-11-17): two games, switched under the top bar: Floppa Mining (latest.json / news.json, installed in user://game)
+## and Floppa Felony (public test: felony.json / felony_news.json, installed in user://felony). Launcher updates come from
+## Mining's latest.json only.
 ## The website is the source of truth:
 ##   https://floppamining.com/launcher/latest.json  {game, url, size, sha256, exe, launcher, launcher_url}
 ##   https://floppamining.com/launcher/news.json    [{title, date, v, url, image}]
@@ -7,14 +10,21 @@ extends Control
 ## Linux (2.0): latest.json has a "linux" block {url, size, sha256, exe, launcher_url, launcher_size, launcher_sha256}
 ## that replaces those fields; shortcuts are .desktop files, notifications go through notify-send.
 
-const LAUNCHER_VERSION := "2.4"
+const LAUNCHER_VERSION := "2.5"
 const APP_NAME := "Floppa Launcher"
 var SITE := "https://floppamining.com"  # tests: -- --site=http://127.0.0.1:8124
 var api := API                       # tests: -- --api=http://127.0.0.1:8799
 const GOLD := Color("#ffd166")
 const BG := Color("#0b0b0d")
 const PANEL := Color(0.06, 0.06, 0.08, 0.86)
-const GAME_DIR := "user://game"
+const GAME_DIR := "user://game"      # Floppa Mining (kept from 1.x so nobody has to download it again)
+## The games in the launcher (2.5). manifest / news are paths on SITE; news links may be full addresses.
+const GAMES := {
+	"mining": {"title": "Floppa Mining", "tag": "FREE TO PLAY", "dir": "user://game", "manifest": "/launcher/latest.json",
+		"news": "/launcher/news.json", "exe": "FloppaMining.exe", "site": "https://floppamining.com", "notes": "/updates/"},
+	"felony": {"title": "Floppa Felony", "tag": "PUBLIC TEST", "dir": "user://felony", "manifest": "/launcher/felony.json",
+		"news": "/launcher/felony_news.json", "exe": "FloppaFelony.exe", "site": "https://felony.floppaland.com", "notes": "/updates/"},
+}
 const ZIP_PATH := "user://download.zip"
 const CFG_PATH := "user://launcher.cfg"
 const API := "https://api.floppamining.com"
@@ -24,7 +34,16 @@ const NAME_RULE := "Name: 3-16 letters (A-Z), numbers or _ (no spaces or other s
 const PW_RULE := "Password: 8-64 characters, any signs allowed (not your name, nothing easy like 12345678)"
 
 var font: Font
-var manifest := {}
+var manifest := {}           ## the shown game's manifest (swapped when you switch games)
+var cur := "mining"           ## the shown game (GAMES key)
+var mstore := {"mining": {}, "felony": {}}
+var game_btns := {}
+var title_lbl: Label
+var tag_lbl: Label
+var notes_link: Button
+var site_link: Button
+var felony_pid := 0
+var bg_pic: TextureRect
 var installed := ""
 var busy := false
 var cfg := ConfigFile.new()
@@ -88,11 +107,13 @@ func _ready() -> void:
 			api = a.substr(6)
 	font = load("res://fonts/Sniglet-Regular.ttf")
 	cfg.load(CFG_PATH)
+	var want_game := str(cfg.get_value("launcher", "game", "mining"))
+	cur = want_game if GAMES.has(want_game) else "mining"
 	installed = _read_installed()
 	_build_ui()
+	_apply_game_ui()
 	_refresh()
-	_get_json(SITE + "/launcher/latest.json", _on_manifest)
-	_get_json(SITE + "/launcher/news.json", _on_news)
+	_fetch_all()
 	_load_account()
 	_setup_tray()
 	_apply_windows()
@@ -100,6 +121,7 @@ func _ready() -> void:
 		_to_tray.call_deferred()
 	_write_path()
 	if _arg("--update"):                # started by the game because a new version is out
+		_switch_game("mining")
 		_check_now.call_deferred()
 
 
@@ -248,6 +270,7 @@ func _build_ui() -> void:
 	bg.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	add_child(bg)
 	var pic := TextureRect.new()
+	bg_pic = pic
 	pic.texture = load("res://bg.png")
 	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -273,26 +296,37 @@ func _build_ui() -> void:
 	top.size = Vector2(1036, 50)
 	top.add_theme_constant_override("separation", 18)
 	add_child(top)
-	var title := Label.new()
-	title.text = "Floppa Mining"
-	_style_label(title, 38, GOLD)
-	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
-	title.add_theme_constant_override("outline_size", 8)
-	top.add_child(title)
-	var tag := Label.new()
-	tag.text = "FREE TO PLAY  ·  %s EDITION" % edition.to_upper()
-	_style_label(tag, 14, Color(1, 1, 1, 0.7))
-	tag.size_flags_vertical = SIZE_SHRINK_CENTER
-	top.add_child(tag)
+	title_lbl = Label.new()
+	_style_label(title_lbl, 38, GOLD)
+	title_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	title_lbl.add_theme_constant_override("outline_size", 8)
+	top.add_child(title_lbl)
+	tag_lbl = Label.new()
+	_style_label(tag_lbl, 14, Color(1, 1, 1, 0.7))
+	tag_lbl.size_flags_vertical = SIZE_SHRINK_CENTER
+	top.add_child(tag_lbl)
+	# game switcher (2.5): one button per game under the top bar
+	var games_row := HBoxContainer.new()
+	games_row.position = Vector2(32, 130)
+	games_row.add_theme_constant_override("separation", 10)
+	add_child(games_row)
+	for gid in GAMES:
+		var gb := _button(str(GAMES[gid].title), 18)
+		gb.custom_minimum_size = Vector2(190, 44)
+		gb.pressed.connect(_switch_game.bind(gid))
+		games_row.add_child(gb)
+		game_btns[gid] = gb
 	var sp := Control.new()
 	sp.size_flags_horizontal = SIZE_EXPAND_FILL
 	top.add_child(sp)
-	top.add_child(_link("Patch notes", SITE + "/updates/"))
+	notes_link = _link("Patch notes", SITE + "/updates/")
+	top.add_child(notes_link)
 	acc_btn = _button("Log in", 17)
 	acc_btn.size_flags_vertical = SIZE_SHRINK_CENTER
 	acc_btn.pressed.connect(_open_account)
 	top.add_child(acc_btn)
-	top.add_child(_link("Website", SITE + "/"))
+	site_link = _link("Website", SITE + "/")
+	top.add_child(site_link)
 	top.add_child(_settings_menu())
 
 	# launcher update banner (hidden until the website says there is a newer launcher)
@@ -403,7 +437,8 @@ func _button(text: String, size: int) -> Button:
 func _link(text: String, url: String) -> Button:
 	var b := _button(text, 17)
 	b.size_flags_vertical = SIZE_SHRINK_CENTER
-	b.pressed.connect(func() -> void: OS.shell_open(url))
+	b.set_meta("url", url)
+	b.pressed.connect(func() -> void: OS.shell_open(str(b.get_meta("url", url))))   # the game switcher changes it
 	return b
 
 
@@ -468,8 +503,8 @@ func _on_setting(id: int, p: PopupMenu) -> void:
 			cfg.set_value("launcher", "quit_on_play", p.is_item_checked(i))
 			cfg.save(CFG_PATH)
 		1:
-			DirAccess.make_dir_recursive_absolute(GAME_DIR)
-			OS.shell_open(ProjectSettings.globalize_path(GAME_DIR))
+			DirAccess.make_dir_recursive_absolute(_dir())
+			OS.shell_open(ProjectSettings.globalize_path(_dir()))
 		2:
 			if not busy and not manifest.is_empty():
 				_start_download()
@@ -477,7 +512,7 @@ func _on_setting(id: int, p: PopupMenu) -> void:
 			_check_now()
 		3:
 			if not busy:
-				_remove_dir(GAME_DIR)
+				_remove_dir(_dir())
 				installed = ""
 				_refresh()
 
@@ -485,7 +520,7 @@ func _on_setting(id: int, p: PopupMenu) -> void:
 # ---------- state ----------
 
 func _read_installed() -> String:
-	var f := FileAccess.open(GAME_DIR + "/version.txt", FileAccess.READ)
+	var f := FileAccess.open(_dir() + "/version.txt", FileAccess.READ)
 	if f == null:
 		return ""
 	if not FileAccess.file_exists(_exe_path()):
@@ -494,6 +529,8 @@ func _read_installed() -> String:
 
 
 func _exe_path() -> String:
+	if cur != "mining":
+		return _dir() + "/" + str(manifest.get("exe", GAMES[cur].exe))
 	return GAME_DIR + "/" + str(manifest.get("exe", cfg.get_value("launcher", "exe", "FloppaMining.exe")))
 
 
@@ -507,7 +544,7 @@ func _refresh() -> void:
 	if game_running:
 		play_btn.text = "IN GAME"
 		play_btn.disabled = true
-		status.text = "Floppa Mining is running. Updates install after you close it."
+		status.text = "%s is running. Updates install after you close it." % GAMES[cur].title
 		if tray != null:
 			tray.tooltip = APP_NAME + ": In game"
 		return
@@ -525,7 +562,8 @@ func _refresh() -> void:
 		status.text = "Up to date. Ready to play"
 	if tray != null:
 		tray.tooltip = APP_NAME + ": " + ("In game" if game_running else status.text)
-	banner.visible = manifest.has("launcher") and _newer(str(manifest.launcher), LAUNCHER_VERSION) and not _self_updating
+	var mm: Dictionary = mstore.mining
+	banner.visible = mm.has("launcher") and _newer(str(mm.launcher), LAUNCHER_VERSION) and not _self_updating
 
 
 func _newer(a: String, b: String) -> bool:
@@ -562,6 +600,70 @@ func _get_json(url: String, cb: Callable) -> void:
 	r.request(url + "?t=%d" % Time.get_unix_time_from_system())
 
 
+## Both games' manifests are fetched (Mining's also carries the launcher version); only the shown one drives the buttons.
+func _fetch_all() -> void:
+	for gid in GAMES:
+		_get_json(SITE + str(GAMES[gid].manifest), _on_manifest_for.bind(gid))
+	_get_json(_abs(str(GAMES[cur].news)), _on_news)
+
+
+func _on_manifest_for(d: Variant, gid: String) -> void:
+	if gid == "mining" and d is Dictionary and d.has("game"):
+		mstore.mining = d
+		if cur != "mining" and _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and is_desktop_build and not busy and not _self_updating:
+			manifest = d
+			_self_update()       # a new launcher comes first, whatever game is shown
+			return
+	if gid != cur:
+		if d is Dictionary and d.has("game"):
+			mstore[gid] = d
+		return
+	_on_manifest(d)
+
+
+func _switch_game(gid: String) -> void:
+	if busy or gid == cur or not GAMES.has(gid):
+		return
+	if not manifest.is_empty():
+		mstore[cur] = manifest
+	cur = gid
+	cfg.set_value("launcher", "game", cur)
+	cfg.save(CFG_PATH)
+	manifest = mstore.get(cur, {})
+	installed = _read_installed()
+	game_running = _is_game_running()
+	_check_failed = false
+	_apply_game_ui()
+	_refresh()
+	_get_json(SITE + str(GAMES[cur].manifest), _on_manifest_for.bind(cur))
+	_get_json(_abs(str(GAMES[cur].news)), _on_news)
+
+
+func _apply_game_ui() -> void:
+	var g: Dictionary = GAMES[cur]
+	bg_pic.texture = load("res://bg_felony.png" if cur == "felony" else "res://bg.png")
+	title_lbl.text = str(g.title)
+	tag_lbl.text = "%s  ·  %s EDITION" % [str(g.tag), edition.to_upper()]
+	notes_link.set_meta("url", str(g.site) + str(g.notes))
+	site_link.set_meta("url", str(g.site) + "/")
+	for gid in game_btns:
+		var b: Button = game_btns[gid]
+		var on: bool = gid == cur
+		b.add_theme_stylebox_override("normal", _box(GOLD if on else PANEL, 12, 0 if on else 1))
+		b.add_theme_color_override("font_color", Color("#1b1006") if on else Color.WHITE)
+	for c in news_box.get_children():
+		c.queue_free()
+
+
+func _dir() -> String:
+	return str(GAMES[cur].dir)
+
+
+## News / image links: full addresses as they are, paths on SITE.
+func _abs(u: String) -> String:
+	return u if u.begins_with("http") else SITE + u
+
+
 func _on_manifest(d: Variant) -> void:
 	if is_linux and d is Dictionary and d.has("game"):
 		if d.get("linux") is Dictionary and (d.linux as Dictionary).has("url"):
@@ -572,16 +674,19 @@ func _on_manifest(d: Variant) -> void:
 			manifest = {}
 			_check_failed = true
 			_refresh()
-			status.text = "There's no Linux build of this version yet. Try again later, or play in the browser: floppamining.com/play/"
+			status.text = ("There's no Linux build of this version yet. Try again later, or play in the browser: floppamining.com/play/"
+				if cur == "mining" else "There's no Linux build of %s yet." % GAMES[cur].title)
 			return
 	if d is Dictionary and d.has("game") and d.has("url"):
 		manifest = d
-		_maybe_notify(d)
-		cfg.set_value("launcher", "exe", str(d.get("exe", "FloppaMining.exe")))
-		cfg.save(CFG_PATH)
+		mstore[cur] = d
+		if cur == "mining":
+			_maybe_notify(d)
+			cfg.set_value("launcher", "exe", str(d.get("exe", "FloppaMining.exe")))
+			cfg.save(CFG_PATH)
 		installed = _read_installed()
 		_check_failed = false
-		if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and is_desktop_build:
+		if cur == "mining" and _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) and is_desktop_build:
 			_self_update()      # new launcher first: it restarts itself and then updates the game
 			return
 		_refresh()
@@ -615,7 +720,7 @@ func _news_card(item: Dictionary) -> Button:
 	card.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	card.mouse_default_cursor_shape = CURSOR_POINTING_HAND
 	card.clip_contents = true
-	card.pressed.connect(func() -> void: OS.shell_open(SITE + str(item.get("url", "/updates/"))))
+	card.pressed.connect(func() -> void: OS.shell_open(_abs(str(item.get("url", "/updates/")))))
 	var img := TextureRect.new()
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
@@ -653,7 +758,7 @@ func _news_card(item: Dictionary) -> Button:
 				var im := Image.new()
 				if im.load_png_from_buffer(body) == OK:
 					img.texture = ImageTexture.create_from_image(im))
-		r.request(SITE + u)
+		r.request(_abs(u))
 	return card
 
 
@@ -666,7 +771,7 @@ func _on_play() -> void:
 		if _check_failed:
 			_check_failed = false
 			_refresh()
-			_get_json(SITE + "/launcher/latest.json", _on_manifest)
+			_get_json(SITE + str(GAMES[cur].manifest), _on_manifest_for.bind(cur))
 		return
 	# check once more right before starting: a new game or launcher may be out since the last check
 	busy = true
@@ -676,16 +781,24 @@ func _on_play() -> void:
 	var r := HTTPRequest.new()
 	r.timeout = 15
 	add_child(r)
-	r.request(SITE + "/launcher/latest.json?t=%d" % Time.get_unix_time_from_system())
+	var asked := cur
+	r.request(SITE + str(GAMES[cur].manifest) + "?t=%d" % Time.get_unix_time_from_system())
 	var res: Array = await r.request_completed
 	r.queue_free()
 	busy = false
 	var d = JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8()) if int(res[0]) == HTTPRequest.RESULT_SUCCESS and int(res[1]) == 200 else null
+	if asked != cur:
+		_refresh()
+		return
+	if is_linux and d is Dictionary and d.get("linux") is Dictionary:
+		d = (d as Dictionary).duplicate()
+		for k in d.linux:
+			d[k] = d.linux[k]
 	if not (d is Dictionary and d.has("game") and d.has("url")):
 		_refresh()
 		status.text = "Couldn't check for updates. Check your internet and try again."
 		return
-	if _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION) or installed != str(d.game):
+	if (cur == "mining" and _newer(str(d.get("launcher", "0")), LAUNCHER_VERSION)) or installed != str(d.game):
 		_on_manifest(d)          # updates the launcher / the game first; PLAY comes back when it's done
 		return
 	manifest = d
@@ -748,6 +861,7 @@ func _poll_self() -> void:
 		c.disconnect_from_host()
 		_show_window()
 		if msg.begins_with("update"):
+			_switch_game("mining")      # only Floppa Mining sends this
 			status.text = "A new version is out: it installs when the game has closed..."
 			_check_t = 0.5
 			_check_now()
@@ -759,7 +873,7 @@ func _process(delta: float) -> void:
 	if _recheck_t <= 0.0:          # look for new versions every 10 minutes while the launcher is open
 		_recheck_t = 600.0
 		if not busy:
-			_get_json(SITE + "/launcher/latest.json", _on_manifest)
+			_fetch_all()
 	_check_t -= delta
 	if _check_t <= 0.0 and not busy:
 		_check_t = 1.5
@@ -807,19 +921,19 @@ func _on_downloaded(res: int, code: int, _h: PackedStringArray, _b: PackedByteAr
 		return
 	status.text = "Installing..."
 	await get_tree().process_frame
-	var err := _extract(ZIP_PATH, "user://game_new")
+	var err := _extract(ZIP_PATH, _dir() + "_new")
 	DirAccess.remove_absolute(ZIP_PATH)
 	if err != "":
-		_remove_dir("user://game_new")
+		_remove_dir(_dir() + "_new")
 		_fail(err)
 		return
-	_remove_dir(GAME_DIR)
-	if DirAccess.rename_absolute("user://game_new", GAME_DIR) != OK:
+	_remove_dir(_dir())
+	if DirAccess.rename_absolute(_dir() + "_new", _dir()) != OK:
 		_fail("Couldn't finish installing. Is the game still open?")
 		return
 	if is_linux:   # zip files don't keep the "may run" flag
 		OS.execute("chmod", ["+x", ProjectSettings.globalize_path(_exe_path())])
-	var f := FileAccess.open(GAME_DIR + "/version.txt", FileAccess.WRITE)
+	var f := FileAccess.open(_dir() + "/version.txt", FileAccess.WRITE)
 	f.store_string(str(manifest.game))
 	f.close()
 	installed = _read_installed()
@@ -871,7 +985,9 @@ func _launch() -> void:
 	if pid <= 0:
 		status.text = "The game couldn't start. Try Settings → Repair."
 		return
-	status.text = "Starting Floppa Mining..."
+	if cur == "felony":
+		felony_pid = pid
+	status.text = "Starting %s..." % GAMES[cur].title
 	play_btn.disabled = true
 	_check_t = 4.0
 	if bool(cfg.get_value("launcher", "quit_on_play", false)):
@@ -896,6 +1012,8 @@ func _fail(msg: String) -> void:
 
 ## The game listens on 127.0.0.1:LOCK_PORT while it runs. If we can't take the port, the game is open.
 func _is_game_running() -> bool:
+	if cur == "felony":       # Felony has no lock port: the launcher watches the process it started
+		return felony_pid > 0 and OS.is_process_running(felony_pid)
 	var t := TCPServer.new()
 	if t.listen(LOCK_PORT, "127.0.0.1") != OK:
 		return true
@@ -1215,8 +1333,9 @@ func _check_now() -> void:
 	if busy:
 		return
 	status.text = "Checking for updates..."
-	_get_json(SITE + "/launcher/latest.json", func(d: Variant) -> void:
-		_on_manifest(d)
+	var asked := cur
+	_get_json(SITE + str(GAMES[cur].manifest), func(d: Variant) -> void:
+		_on_manifest_for(d, asked)
 		if not busy and not manifest.is_empty() and installed == str(manifest.game) and not game_running:
 			status.text = "Everything is up to date (game %s, launcher %s)" % [installed, LAUNCHER_VERSION])
 
