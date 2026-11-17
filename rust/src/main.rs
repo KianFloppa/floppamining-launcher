@@ -28,12 +28,32 @@ fn arg(a: &str) -> bool { std::env::args().any(|x| x == a) }
 fn arg_val(p: &str) -> Option<String> { std::env::args().find_map(|x| x.strip_prefix(p).map(|s| s.to_string())) }
 
 /// News / image links: full addresses as they are, paths on the site.
+/// A news picture as a small thumbnail, kept on disk (cache\news) so it is downloaded only once.
+/// Each update has its own picture address, so a cached file never goes stale.
+fn news_thumb(url: &str) -> Option<image::RgbaImage> {
+    use sha2::{Digest, Sha256};
+    let dir = data_dir().join("cache").join("news");
+    let name: String = Sha256::digest(url.as_bytes()).iter().take(12).map(|b| format!("{b:02x}")).collect();
+    let file = dir.join(format!("{name}.png"));
+    if let Ok(i) = image::open(&file) { return Some(i.to_rgba8()); }
+    let bytes = get_bytes(url, 16 << 20)?;
+    let img = image::load_from_memory(&bytes).ok()?.thumbnail(668, 208).to_rgba8();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = img.save(&file);
+    // keep the folder small: only the 30 newest pictures
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut v: Vec<_> = rd.flatten().filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+        if v.len() > 30 { v.sort(); for (_, p) in &v[..v.len() - 30] { let _ = std::fs::remove_file(p); } }
+    }
+    Some(img)
+}
+
 fn abs(u: &str) -> String { if u.starts_with("http") { u.to_string() } else { format!("{}{u}", site()) } }
 
 enum Msg {
     Manifest { id: String, data: Option<Value>, play: bool },
     News { gen: u32, items: Vec<Value> },
-    NewsImage { gen: u32, idx: usize, img: egui::ColorImage },
+    NewsImage { gen: u32, idx: usize, url: String, img: egui::ColorImage },
     Progress(u64, u64),
     Installed { id: String, result: Result<(), String> },
     SelfUpdateFailed,
@@ -69,6 +89,8 @@ struct App {
     felony_child: Option<std::process::Child>,
     news: Vec<Card>,
     news_gen: u32,
+    /// News pictures already shown this session, by address (no new download when switching tabs).
+    img_cache: HashMap<String, egui::TextureHandle>,
     news_loaded: bool,
     bg: HashMap<&'static str, egui::TextureHandle>,
     recheck_at: Instant,
@@ -181,7 +203,7 @@ impl App {
         let mut app = App {
             tx, rx, ctx: ctx.clone(), cfg, cur, manifest: Value::Null, mstore: HashMap::new(), installed: String::new(),
             busy: false, self_updating: false, check_failed: false, status: "Checking for updates...".into(), progress: None,
-            speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, felony_child: None, news: vec![], news_gen: 0,
+            speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, felony_child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
             news_loaded: false, bg, recheck_at: Instant::now() + Duration::from_secs(600), running_check_at: Instant::now(),
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
@@ -325,6 +347,7 @@ impl App {
         self.news_loaded = false;
         let (tx, ctx, gen) = (self.tx.clone(), self.ctx.clone(), self.news_gen);
         let url = abs(game(&self.cur).news);
+        let known: std::collections::HashSet<String> = self.img_cache.keys().cloned().collect();
         std::thread::spawn(move || {
             let items = get_json(&url).and_then(|v| v.as_array().cloned()).unwrap_or_default();
             let items: Vec<Value> = items.into_iter().take(3).collect();
@@ -332,11 +355,11 @@ impl App {
             ctx.request_repaint();
             for (idx, it) in items.iter().enumerate() {
                 let Some(u) = it.get("image").and_then(|v| v.as_str()).filter(|u| !u.is_empty()) else { continue };
-                let Some(bytes) = get_bytes(&abs(u), 16 << 20) else { continue };
-                let Ok(img) = image::load_from_memory(&bytes) else { continue };
-                let img = img.thumbnail(668, 208).to_rgba8();
+                let u = abs(u);
+                if known.contains(&u) { continue; } // already in memory: shown from there
+                let Some(img) = news_thumb(&u) else { continue };
                 let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], &img);
-                let _ = tx.send(Msg::NewsImage { gen, idx, img: ci });
+                let _ = tx.send(Msg::NewsImage { gen, idx, url: u, img: ci });
                 ctx.request_repaint();
             }
         });
@@ -625,11 +648,13 @@ impl App {
                     self.news_loaded = true;
                     self.news = items.iter().map(|it| Card {
                         title: it["title"].as_str().unwrap_or("").into(), date: it["date"].as_str().unwrap_or("").into(),
-                        v: it["v"].as_str().unwrap_or("").into(), url: it["url"].as_str().unwrap_or("/updates/").into(), tex: None,
+                        v: it["v"].as_str().unwrap_or("").into(), url: it["url"].as_str().unwrap_or("/updates/").into(),
+                        tex: it["image"].as_str().filter(|u| !u.is_empty()).and_then(|u| self.img_cache.get(&abs(u)).cloned()),
                     }).collect();
                 }
-                Msg::NewsImage { gen, idx, img } if gen == self.news_gen => {
-                    if let Some(c) = self.news.get_mut(idx) { c.tex = Some(self.ctx.load_texture(format!("news{gen}-{idx}"), img, egui::TextureOptions::LINEAR)); }
+                Msg::NewsImage { gen, idx, url, img } => {
+                    let t = self.img_cache.entry(url.clone()).or_insert_with(|| self.ctx.load_texture(format!("news:{url}"), img, egui::TextureOptions::LINEAR)).clone();
+                    if gen == self.news_gen { if let Some(c) = self.news.get_mut(idx) { c.tex = Some(t); } }
                 }
                 Msg::Progress(got, total) => {
                     let dt = self.last_prog.0.elapsed().as_secs_f64();
