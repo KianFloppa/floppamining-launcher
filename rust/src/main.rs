@@ -770,6 +770,9 @@ impl eframe::App for App {
                 std::process::exit(0); // close for real: a download thread or the tray icon never keeps it alive
             }
         }
+        if self.hidden && self.shot.is_none() {
+            return; // in the tray: only the heartbeat wakes us (update checks, game running); nothing is drawn
+        }
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| self.draw(ui));
         ctx.request_repaint_after(Duration::from_millis(if self.busy { 100 } else { 1000 }));
         if let Some(path) = self.shot.clone() {
