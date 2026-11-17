@@ -1,5 +1,14 @@
 # Floppa Launcher
 
+**3.0 is written in Rust (`rust/`):** same screen, games, settings and files as the Godot launcher (main.gd, kept as the
+fallback until 3.0 is confirmed on Windows), but a ~5 MB exe instead of ~105 MB, no PowerShell, no game engine.
+Build: `cd rust && cargo build --release` (Linux) and `cargo build --release --target x86_64-pc-windows-gnu` (Windows,
+needs `mingw-w64`). Zip `FloppaLauncher.exe` / `FloppaLauncher.x86_64` as `builds/FloppaLauncher-<v>.zip` / `-linux.zip`.
+Tests: `cargo test --release` (api_test needs the game server on 127.0.0.1:8799: floppatreasure-game/server `npx wrangler dev --port 8799 --local`),
+screenshots: `FloppaLauncher --site=http://127.0.0.1:8124 --no-self-update --open=settings|login|signup --shot=/tmp/x.png`.
+Updating from Godot 2.x: the old launcher downloads the zip, swaps in the new exe and starts it; the Rust launcher waits
+for the old one to let go of port 47732 when a `.old` exe is next to it (it starts in milliseconds, Godot took seconds).
+
 (Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows) and, since 2.5, **Floppa Felony** (public test): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
