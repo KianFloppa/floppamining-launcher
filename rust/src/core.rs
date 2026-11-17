@@ -376,7 +376,7 @@ pub fn self_update(url: &str, sha: &str) -> Result<(), String> {
     let mut data = Vec::new();
     for i in 0..z.len() {
         let mut e = z.by_index(i).map_err(|e| e.to_string())?;
-        if e.name().to_lowercase().ends_with(want) {
+        if e.name().map(|n| n.to_lowercase().ends_with(want)).unwrap_or(false) {
             e.read_to_end(&mut data).map_err(|e| e.to_string())?;
         }
     }
