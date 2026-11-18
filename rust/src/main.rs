@@ -69,6 +69,24 @@ enum Page { None, Login, Signup, Code(String), Account }
 
 struct Card { title: String, date: String, v: String, url: String, tex: Option<egui::TextureHandle> }
 
+static HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Wake a hidden window from any thread (tray, local port). Elsewhere a no-op: there the viewport commands work.
+fn wake_window() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
+        let h = HWND.load(std::sync::atomic::Ordering::Relaxed);
+        if h != 0 {
+            unsafe {
+                ShowWindow(h as _, SW_SHOW);
+                ShowWindow(h as _, SW_RESTORE);
+                SetForegroundWindow(h as _);
+            }
+        }
+    }
+}
+
 struct App {
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -159,6 +177,13 @@ fn main() -> eframe::Result<()> {
 impl App {
     fn new(cc: &eframe::CreationContext, listener: Option<std::net::TcpListener>) -> App {
         let ctx = cc.egui_ctx.clone();
+        #[cfg(windows)]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(h) = cc.window_handle() {
+                if let RawWindowHandle::Win32(w) = h.as_raw() { HWND.store(w.hwnd.get(), std::sync::atomic::Ordering::Relaxed); }
+            }
+        }
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert("sniglet".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Sniglet-Regular.ttf"))));
         fonts.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "sniglet".into());
@@ -176,6 +201,7 @@ impl App {
                     let n = s.read(&mut buf).unwrap_or(0);
                     let msg = String::from_utf8_lossy(&buf[..n]).to_string();
                     let _ = tx2.send(if msg.starts_with("update") { Msg::Update } else { Msg::Show });
+                    wake_window();
                     c2.request_repaint();
                 }
             });
@@ -229,6 +255,9 @@ impl App {
     }
 
     // ------------------------------------------------------------ tray
+    // 3.0.2: a window hidden with Visible(false) gets no more frames on Windows, so it never handled the
+    // "show" commands (tray click, menu, the game's "Update now"): the launcher looked dead. These threads now
+    // show the window through Windows directly; its frames start again and update() handles the message.
     #[cfg(windows)]
     fn setup_tray(&mut self) {
         use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -246,7 +275,9 @@ impl App {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
             if let Some(i) = ids.iter().position(|x| *x == e.id) {
+                if i == 3 { std::process::exit(0); } // Quit works even while the window gets no frames
                 let _ = tx.send(Msg::Tray(i as u8));
+                wake_window();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.request_repaint();
             }
@@ -255,6 +286,7 @@ impl App {
         tray_icon::TrayIconEvent::set_event_handler(Some(move |e: tray_icon::TrayIconEvent| {
             if let tray_icon::TrayIconEvent::Click { button: tray_icon::MouseButton::Left, .. } = e {
                 let _ = tx.send(Msg::Show);
+                wake_window();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.request_repaint();
             }

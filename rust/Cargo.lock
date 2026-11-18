@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "floppa-launcher"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "eframe",
  "egui",
@@ -922,11 +922,13 @@ dependencies = [
  "mslnk",
  "notify-rust",
  "open",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha2",
  "tray-icon",
  "ureq",
+ "windows-sys 0.61.2",
  "winreg",
  "winresource",
  "zip",
