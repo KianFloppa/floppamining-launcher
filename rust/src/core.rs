@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.0.3";
+pub const LAUNCHER_VERSION: &str = "3.0.4";
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -172,6 +172,33 @@ fn unescape(s: &str) -> String {
 pub fn vname(v: &str) -> String {
     let major: i64 = v.split('.').next().and_then(|x| x.parse().ok()).unwrap_or(0);
     format!("{}{v}", if major >= 10 { "Prototype " } else { "Open Beta " })
+}
+
+/// 3.0.4: a release date ("2026-11-18") the short way: "today", "yesterday", "3 days ago", else "18 Nov 2026".
+pub fn short_date(iso: &str) -> String {
+    let p: Vec<i64> = iso.split('-').map(|x| x.parse().unwrap_or(0)).collect();
+    if p.len() != 3 || p[0] < 2000 { return iso.to_string(); }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let today = (now + 3600) / 86400;   // the players are mostly in Europe: close enough for "today"
+    let ago = today - days_from_civil(p[0], p[1], p[2]);
+    const M: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    match ago {
+        0 => "today".into(),
+        1 => "yesterday".into(),
+        2..=6 => format!("{ago} days ago"),
+        _ => format!("{} {} {}", p[2], M[((p[1] - 1).clamp(0, 11)) as usize], p[0]),
+    }
+}
+
+/// Days since 1970-01-01 (Howard Hinnant's civil date algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
 }
 
 pub fn newer(a: &str, b: &str) -> bool {
@@ -499,4 +526,16 @@ pub fn toast(title: &str, body: &str) {
     #[cfg(target_os = "linux")]
     n.appname(APP_NAME);
     let _ = n.show();
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::*;
+    #[test]
+    fn civil() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2026, 11, 18), 20775);
+        assert_eq!(short_date("2020-03-05"), "5 Mar 2020");
+        assert_eq!(short_date("bad"), "bad");
+    }
 }

@@ -956,9 +956,17 @@ impl App {
             if f > 0.0 { p.rect_filled(Rect::from_min_size(br.min, Vec2::new(br.width() * f, 12.0)), CornerRadius::same(6), GOLD); }
         }
         let online = self.manifest["game"].as_str().unwrap_or("");
+        // 3.0.4 (Kian): a small release date after each version (from the patch notes), always shown, no hover needed
+        let dated = |v: &str| -> String {
+            let n = vname(v);
+            match self.news.iter().find(|c| c.v == n && !c.date.is_empty()) {
+                Some(c) => format!("{n} ({})", short_date(&c.date)),
+                None => n,
+            }
+        };
         let ver = format!("Installed: {}   ·   Newest: {}   ·   Launcher {} ({})",
-            if self.installed.is_empty() { "nothing yet".into() } else { vname(&self.installed) },
-            if online.is_empty() { "checking...".into() } else { vname(online) }, LAUNCHER_VERSION, edition());
+            if self.installed.is_empty() { "nothing yet".into() } else { dated(&self.installed) },
+            if online.is_empty() { "checking...".into() } else { dated(online) }, LAUNCHER_VERSION, edition());
         p.text(Pos2::new(46.0, 604.0), Align2::LEFT_TOP, ver, font(13.0), Color32::from_white_alpha(128));
         let pr = Rect::from_min_size(Pos2::new(804.0, 552.0), Vec2::new(250.0, 66.0));
         if button(ui, pr, &btn_text, 30.0, Look::Gold, btn_on).clicked() {
