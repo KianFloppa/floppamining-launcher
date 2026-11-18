@@ -932,6 +932,10 @@ impl App {
                 let mut img = egui::epaint::RectShape::filled(ir, CornerRadius { nw: 13, ne: 13, sw: 0, se: 0 }, Color32::WHITE);
                 img.brush = Some(std::sync::Arc::new(egui::epaint::Brush { fill_texture_id: t.id(), uv }));
                 p.add(img);
+            } else {   // 3.0.3: an update without a picture says so instead of an empty box
+                let ir = Rect::from_min_size(r.min + Vec2::new(1.0, 1.0), Vec2::new(332.0, 104.0));
+                p.rect_filled(ir, CornerRadius { nw: 13, ne: 13, sw: 0, se: 0 }, Color32::from_rgb(20, 18, 15));
+                p.text(ir.center(), Align2::CENTER_CENTER, "No preview image for this update", font(13.0), Color32::from_white_alpha(90));
             }
             p.text(r.min + Vec2::new(14.0, 112.0), Align2::LEFT_TOP, format!("{}  ·  {}", c.v, c.date), font(13.0), GOLD);
             wrapped(&p, r.min + Vec2::new(14.0, 130.0), &c.title, 16.0, Color32::WHITE, 306.0);
