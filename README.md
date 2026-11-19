@@ -45,7 +45,7 @@ Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-lin
 - Manifest `floppamining.com/launcher/mystery.json` {game, url, size, sha256, exe, linux {url, size, sha256, exe}} and news
   `/launcher/mystery_news.json`, both made by floppatreasure-site `tools/pages.py` from the `mystery` block of
   `tools/launcher.json`. Versions show as "Test 0.1.0" (`vname_for`).
-- Installed in `<launcher folder>/mystery`. No lock port: the launcher watches the process it started (like Felony).
+- Installed in `<launcher folder>/mystery`. Lock port 127.0.0.1:47733 while it runs (3.1.2: PLAY refuses while another Floppa game runs; Mystery and Mining refuse to start while the other runs).
   The game's update screen sends "update mystery" to 127.0.0.1:47732 (plain "update" = Floppa Mining).
 - The game reads the Floppa login the launcher writes (Mining's account.cfg), so it starts logged in.
 - Release: in floppamystery-game bump `config/version`, export the presets "Windows" (`FloppaMystery.exe`, pck embedded)

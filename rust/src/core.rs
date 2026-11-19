@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.1";
+pub const LAUNCHER_VERSION: &str = "3.1.2";
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -446,6 +446,13 @@ pub fn remove_old_exe() {
 /// Floppa Mining listens on 127.0.0.1:LOCK_PORT while it runs: if we can't take the port, it is open.
 pub fn mining_running() -> bool {
     std::net::TcpListener::bind(("127.0.0.1", LOCK_PORT)).is_err()
+}
+
+/// 3.1.2: Floppa Mystery holds this local port while it runs (like Mining's LOCK_PORT): one Floppa game at a time.
+pub const MYSTERY_LOCK_PORT: u16 = 47733;
+
+pub fn port_held(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
 /// The game finds the launcher through this file when a new version is out (it starts it with --update).

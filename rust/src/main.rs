@@ -525,8 +525,32 @@ impl App {
         });
     }
 
+    /// 3.1.2 (Kian): one Floppa game at a time, so the profile can say which game you're in.
+    /// Another game that is still running (its own lock port, or the process the launcher started).
+    fn other_running(&mut self) -> Option<&'static str> {
+        let cur = self.cur.clone();
+        let child_game = match &mut self.child {
+            Some((id, c)) => if matches!(c.try_wait(), Ok(None)) { id.clone() } else { String::new() },
+            None => String::new(),
+        };
+        for g in GAMES.iter() {
+            if g.id == cur { continue; }
+            let on = match g.id {
+                "mining" => mining_running(),
+                "mystery" => port_held(MYSTERY_LOCK_PORT) || child_game == "mystery",
+                _ => child_game == g.id,
+            };
+            if on { return Some(g.title); }
+        }
+        None
+    }
+
     fn on_play(&mut self) {
         if self.busy || self.is_running() { return; }
+        if let Some(t) = self.other_running() {
+            self.status = format!("{t} is still running. Close it first: one Floppa game at a time.");
+            return;
+        }
         if self.manifest.is_null() {
             if self.check_failed {
                 self.check_failed = false;
@@ -541,6 +565,10 @@ impl App {
     }
 
     fn launch(&mut self) {
+        if let Some(t) = self.other_running() {
+            self.status = format!("{t} is still running. Close it first: one Floppa game at a time.");
+            return;
+        }
         let exe = game_dir(&self.cur).join(self.exe_name());
         match std::process::Command::new(&exe).arg(format!("--launcher={LAUNCHER_VERSION}")).current_dir(game_dir(&self.cur)).spawn() {
             Ok(child) => {
@@ -568,6 +596,7 @@ impl App {
         if self.cur != "mining" {
             // Felony and Mystery have no lock port: the launcher watches the process it started
             let cur = self.cur.clone();
+            if cur == "mystery" && port_held(MYSTERY_LOCK_PORT) { return true; }   // also when started without the launcher
             return match &mut self.child {
                 Some((id, c)) if *id == cur => matches!(c.try_wait(), Ok(None)),
                 _ => false,
