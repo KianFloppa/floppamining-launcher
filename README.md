@@ -9,7 +9,7 @@ screenshots: `FloppaLauncher --site=http://127.0.0.1:8124 --no-self-update --ope
 Updating from Godot 2.x: the old launcher downloads the zip, swaps in the new exe and starts it; the Rust launcher waits
 for the old one to let go of port 47732 when a `.old` exe is next to it (it starts in milliseconds, Godot took seconds).
 
-(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows) and, since 2.5, **Floppa Felony** (public test): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
+(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows), since 2.5 **Floppa Felony** (public test) and since 3.1 **Floppa Mystery** (public test): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
@@ -40,3 +40,15 @@ Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-lin
 - Installed in `user://felony` (Mining stays in `user://game`). Felony has no lock port: the launcher watches the process it started.
 - Release: in floppaheist-game bump `config/version`, `godot --headless --path . --export-release "Windows Desktop" /tmp/felbuild/FloppaFelony.exe`, zip `FloppaFelony.exe` + `FloppaFelony.pck` as `builds/FloppaFelony-<v>.zip`, update felony.json (size, sha256) and felony_news.json. No Linux build yet (the launcher says so on Linux).
 - Test: `tests/games_test.gd` (local copy of the site with latest.json + felony.json, see its header).
+
+## Floppa Mystery (launcher 3.1, 2026-11-19)
+- Manifest `floppamining.com/launcher/mystery.json` {game, url, size, sha256, exe, linux {url, size, sha256, exe}} and news
+  `/launcher/mystery_news.json`, both made by floppatreasure-site `tools/pages.py` from the `mystery` block of
+  `tools/launcher.json`. Versions show as "Test 0.1.0" (`vname_for`).
+- Installed in `<launcher folder>/mystery`. No lock port: the launcher watches the process it started (like Felony).
+  The game's update screen sends "update mystery" to 127.0.0.1:47732 (plain "update" = Floppa Mining).
+- The game reads the Floppa login the launcher writes (Mining's account.cfg), so it starts logged in.
+- Release: in floppamystery-game bump `config/version`, export the presets "Windows" (`FloppaMystery.exe`, pck embedded)
+  and "Linux" (`FloppaMystery.x86_64`), zip each as `FloppaMystery-<v>.zip` / `-linux.zip`, put them in `builds/`, push,
+  then the `mystery` block in the site's `tools/launcher.json` + `python3 tools/build.py` + push.
+- Background: `rust/assets/bg_mystery.jpg` (floppamystery-game `tools/make_launcher_bg.gd`).

@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.0.4";
+pub const LAUNCHER_VERSION: &str = "3.1.0";
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -28,11 +28,14 @@ pub struct Game {
     pub site: &'static str,
 }
 
-pub const GAMES: [Game; 2] = [
+pub const GAMES: [Game; 3] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com" },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
         news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com" },
+    // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
+    Game { id: "mystery", title: "Floppa Mystery", tag: "PUBLIC TEST", dir: "mystery", manifest: "/launcher/mystery.json",
+        news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download/" },
 ];
 
 pub fn game(id: &str) -> &'static Game {
@@ -172,6 +175,11 @@ fn unescape(s: &str) -> String {
 pub fn vname(v: &str) -> String {
     let major: i64 = v.split('.').next().and_then(|x| x.parse().ok()).unwrap_or(0);
     format!("{}{v}", if major >= 10 { "Prototype " } else { "Open Beta " })
+}
+
+/// 3.1: the version's name for a game: Floppa Mystery's builds are "Test 0.1.0" (its patch notes use the same words).
+pub fn vname_for(game_id: &str, v: &str) -> String {
+    if game_id == "mystery" { format!("Test {v}") } else { vname(v) }
 }
 
 /// 3.0.4: a release date ("2026-11-18") the short way: "today", "yesterday", "3 days ago", else "18 Nov 2026".

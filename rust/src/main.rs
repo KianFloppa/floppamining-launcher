@@ -59,7 +59,7 @@ enum Msg {
     SelfUpdateFailed,
     Api { kind: &'static str, code: u16, data: Value },
     Show,
-    Update,
+    Update(String), // the game that asked (3.1)
     Tray(u8), // 0 open, 1 play, 2 check, 3 quit
     Tick,
 }
@@ -104,7 +104,7 @@ struct App {
     speed: f64,
     last_prog: (Instant, u64),
     game_running: bool,
-    felony_child: Option<std::process::Child>,
+    child: Option<(String, std::process::Child)>,   // the Felony / Mystery process it started (no lock port)
     news: Vec<Card>,
     news_gen: u32,
     /// News pictures already shown this session, by address (no new download when switching tabs).
@@ -200,7 +200,11 @@ impl App {
                     let mut buf = [0u8; 64];
                     let n = s.read(&mut buf).unwrap_or(0);
                     let msg = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = tx2.send(if msg.starts_with("update") { Msg::Update } else { Msg::Show });
+                    // "update" (Floppa Mining) or "update <game id>" (3.1: Floppa Mystery sends "update mystery")
+                    let _ = tx2.send(if let Some(rest) = msg.strip_prefix("update") {
+                        let g = rest.trim();
+                        Msg::Update(if GAMES.iter().any(|x| x.id == g) { g.to_string() } else { "mining".to_string() })
+                    } else { Msg::Show });
                     wake_window();
                     c2.request_repaint();
                 }
@@ -219,7 +223,8 @@ impl App {
         let want = cfg.get_str("launcher", "game", "mining");
         let cur = if GAMES.iter().any(|g| g.id == want) { want } else { "mining".into() };
         let mut bg = HashMap::new();
-        for (k, bytes) in [("mining", &include_bytes!("../assets/bg.jpg")[..]), ("felony", &include_bytes!("../assets/bg_felony.jpg")[..])] {
+        for (k, bytes) in [("mining", &include_bytes!("../assets/bg.jpg")[..]), ("felony", &include_bytes!("../assets/bg_felony.jpg")[..]),
+            ("mystery", &include_bytes!("../assets/bg_mystery.jpg")[..])] {
             if let Ok(i) = image::load_from_memory(bytes) {
                 let i = i.to_rgba8();
                 let ci = egui::ColorImage::from_rgba_unmultiplied([i.width() as usize, i.height() as usize], &i);
@@ -229,7 +234,7 @@ impl App {
         let mut app = App {
             tx, rx, ctx: ctx.clone(), cfg, cur, manifest: Value::Null, mstore: HashMap::new(), installed: String::new(),
             busy: false, self_updating: false, check_failed: false, status: "Checking for updates...".into(), progress: None,
-            speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, felony_child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
+            speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
             news_loaded: false, bg, recheck_at: Instant::now() + Duration::from_secs(600), running_check_at: Instant::now(),
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
@@ -503,7 +508,7 @@ impl App {
         self.progress = Some((0, m["size"].as_u64().unwrap_or(0)));
         self.speed = 0.0;
         self.last_prog = (Instant::now(), 0);
-        self.status = format!("Downloading {}...", vname(&ver));
+        self.status = format!("Downloading {}...", vname_for(&self.cur, &ver));
         let (tx, ctx, id, exe) = (self.tx.clone(), self.ctx.clone(), self.cur.clone(), self.exe_name().to_string());
         std::thread::spawn(move || {
             let last = std::cell::Cell::new(Instant::now() - Duration::from_secs(1));
@@ -539,7 +544,7 @@ impl App {
         let exe = game_dir(&self.cur).join(self.exe_name());
         match std::process::Command::new(&exe).arg(format!("--launcher={LAUNCHER_VERSION}")).current_dir(game_dir(&self.cur)).spawn() {
             Ok(child) => {
-                if self.cur == "felony" { self.felony_child = Some(child); }
+                if self.cur != "mining" { self.child = Some((self.cur.clone(), child)); }
                 self.status = format!("Starting {}...", game(&self.cur).title);
                 self.running_check_at = Instant::now() + Duration::from_secs(4);
                 if self.cfg.get_bool("launcher", "quit_on_play", false) {
@@ -560,11 +565,12 @@ impl App {
     }
 
     fn is_running(&mut self) -> bool {
-        if self.cur == "felony" {
-            // Felony has no lock port: the launcher watches the process it started
-            return match &mut self.felony_child {
-                Some(c) => matches!(c.try_wait(), Ok(None)),
-                None => false,
+        if self.cur != "mining" {
+            // Felony and Mystery have no lock port: the launcher watches the process it started
+            let cur = self.cur.clone();
+            return match &mut self.child {
+                Some((id, c)) if *id == cur => matches!(c.try_wait(), Ok(None)),
+                _ => false,
             };
         }
         mining_running()
@@ -698,14 +704,14 @@ impl App {
                     let total = if total > 0 { total } else { self.manifest["size"].as_u64().unwrap_or(0) };
                     self.progress = Some((got, total));
                     let left = if self.speed > 1000.0 && total > got { let s = ((total - got) as f64 / self.speed) as u64; format!(" · {}:{:02} left", s / 60, s % 60) } else { String::new() };
-                    self.status = format!("Downloading {}: {} / {} · {:.1} MB/s{}", vname(self.manifest["game"].as_str().unwrap_or("")), mb(got), mb(total), self.speed / 1048576.0, left);
+                    self.status = format!("Downloading {}: {} / {} · {:.1} MB/s{}", vname_for(&self.cur, self.manifest["game"].as_str().unwrap_or("")), mb(got), mb(total), self.speed / 1048576.0, left);
                 }
                 Msg::Installed { id, result } => {
                     self.busy = false;
                     self.progress = None;
                     if id == self.cur {
                         self.installed = installed_version(&self.cur, self.exe_name());
-                        self.status = match result { Ok(()) => format!("{} is installed. Have fun!", vname(&self.installed)), Err(e) => e };
+                        self.status = match result { Ok(()) => format!("{} is installed. Have fun!", vname_for(&self.cur, &self.installed)), Err(e) => e };
                     }
                 }
                 Msg::SelfUpdateFailed => {
@@ -714,9 +720,9 @@ impl App {
                 }
                 Msg::Api { kind, code, data } => self.on_api(kind, code, data),
                 Msg::Show => self.show_window(),
-                Msg::Update => {
+                Msg::Update(g) => {
                     self.show_window();
-                    self.switch_game("mining"); // only Floppa Mining sends this
+                    self.switch_game(&g); // Floppa Mining sends "update", Floppa Mystery "update mystery"
                     self.status = "A new version is out: it installs when the game has closed...".into();
                     self.running_check_at = Instant::now() + Duration::from_millis(500);
                     self.check_now();
@@ -767,7 +773,7 @@ impl App {
         let online = self.manifest["game"].as_str().unwrap_or("");
         if self.installed.is_empty() || online != self.installed {
             let s = if self.status.starts_with("The ") || self.status.starts_with("Couldn") { self.status.clone() }
-                else { format!("{} ({})", vname(online), mb(self.manifest["size"].as_u64().unwrap_or(0))) };
+                else { format!("{} ({})", vname_for(&self.cur, online), mb(self.manifest["size"].as_u64().unwrap_or(0))) };
             return (if self.installed.is_empty() { "INSTALL".into() } else { "UPDATE".into() }, true, s);
         }
         let s = if self.status.contains("installed") || self.status.starts_with("Starting") || self.status.starts_with("Everything") || self.status.starts_with("The game couldn't") { self.status.clone() } else { "Up to date. Ready to play".into() };
@@ -858,7 +864,7 @@ impl App {
         let full = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 640.0));
         let p = ui.painter().clone();
         p.rect_filled(full, CornerRadius::ZERO, Color32::from_rgb(0x0b, 0x0b, 0x0d));
-        if let Some(t) = self.bg.get(if self.cur == "felony" { "felony" } else { "mining" }) {
+        if let Some(t) = self.bg.get(self.cur.as_str()).or_else(|| self.bg.get("mining")) {
             p.image(t.id(), full, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::from_rgb(140, 140, 153));
         }
         // shade: light at the top, dark at the bottom
@@ -958,7 +964,7 @@ impl App {
         let online = self.manifest["game"].as_str().unwrap_or("");
         // 3.0.4 (Kian): a small release date after each version (from the patch notes), always shown, no hover needed
         let dated = |v: &str| -> String {
-            let n = vname(v);
+            let n = vname_for(&self.cur, v);
             match self.news.iter().find(|c| c.v == n && !c.date.is_empty()) {
                 Some(c) => format!("{n} ({})", short_date(&c.date)),
                 None => n,
