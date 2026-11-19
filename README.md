@@ -41,7 +41,7 @@ Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-lin
 - Release: in floppaheist-game bump `config/version`, `godot --headless --path . --export-release "Windows Desktop" /tmp/felbuild/FloppaFelony.exe`, zip `FloppaFelony.exe` + `FloppaFelony.pck` as `builds/FloppaFelony-<v>.zip`, update felony.json (size, sha256) and felony_news.json. No Linux build yet (the launcher says so on Linux).
 - Test: `tests/games_test.gd` (local copy of the site with latest.json + felony.json, see its header).
 
-## Floppa Mystery (launcher 3.1, 2026-11-19)
+## Floppa Mystery (launcher 3.1, 2026-11-19; 3.1.1: the Patch notes button per game, `Game.notes`)
 - Manifest `floppamining.com/launcher/mystery.json` {game, url, size, sha256, exe, linux {url, size, sha256, exe}} and news
   `/launcher/mystery_news.json`, both made by floppatreasure-site `tools/pages.py` from the `mystery` block of
   `tools/launcher.json`. Versions show as "Test 0.1.0" (`vname_for`).

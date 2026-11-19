@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.0";
+pub const LAUNCHER_VERSION: &str = "3.1.1";
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -26,16 +26,20 @@ pub struct Game {
     pub news: &'static str,
     pub exe: &'static str,
     pub site: &'static str,
+    pub notes: &'static str,   // 3.1.1: the "Patch notes" button (a game without patch note pages links its download page)
 }
 
 pub const GAMES: [Game; 3] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
-        news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com" },
+        news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
+        notes: "https://floppamining.com/updates/" },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
-        news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com" },
+        news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com",
+        notes: "https://felony.floppaland.com/updates/" },
     // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
     Game { id: "mystery", title: "Floppa Mystery", tag: "PUBLIC TEST", dir: "mystery", manifest: "/launcher/mystery.json",
-        news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download/" },
+        news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
+        notes: "https://floppamining.com/download/" },
 ];
 
 pub fn game(id: &str) -> &'static Game {

@@ -896,7 +896,7 @@ impl App {
                 match kind {
                     0 => open_url(&format!("{}/", g.site)),
                     1 => { self.page = if self.acc_id.is_empty() { Page::Login } else { Page::Account }; self.f_msg.clear(); }
-                    _ => open_url(&format!("{}/updates/", g.site)),
+                    _ => open_url(g.notes),
                 }
             }
             x -= w + 18.0;
