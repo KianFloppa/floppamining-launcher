@@ -36,9 +36,9 @@ Download: https://floppamining.com/download/
 Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-linux.zip`. latest.json's `linux` block replaces url/size/sha256/exe/launcher_url/launcher_sha256 on Linux. Shortcuts are .desktop files (Desktop, ~/.local/share/applications, ~/.config/autostart with --tray), notifications use notify-send.
 
 ## Floppa Felony (launcher 2.5, 2026-11-17)
-- Manifest `floppamining.com/launcher/felony.json` {game, url, size, sha256, exe} and news `/launcher/felony_news.json` (full links to felony.floppaland.com), both in the floppatreasure-site repo.
+- Manifest `floppamining.com/launcher/felony.json` {game, url, size, sha256, exe} and news `/launcher/felony_news.json` (full links to felony.floppaland.com), both made by floppatreasure-site `tools/pages.py` from the `felony` block of `tools/launcher.json`. Never edit the two files themselves: every site build writes them again (until 2026-11-20 the block still said 117, so a Mystery release's build turned Felony back to 117).
 - Installed in `user://felony` (Mining stays in `user://game`). Felony has no lock port: the launcher watches the process it started.
-- Release: in floppaheist-game bump `config/version`, `godot --headless --path . --export-release "Windows Desktop" /tmp/felbuild/FloppaFelony.exe`, zip `FloppaFelony.exe` + `FloppaFelony.pck` as `builds/FloppaFelony-<v>.zip`, update felony.json (size, sha256) and felony_news.json. No Linux build yet (the launcher says so on Linux).
+- Release: in floppaheist-game bump `config/version`, `godot --headless --path . --export-release "Windows Desktop" /tmp/felbuild/FloppaFelony.exe`, zip `FloppaFelony.exe` + `FloppaFelony.pck` as `builds/FloppaFelony-<v>.zip`, then in floppatreasure-site update the `felony` block of `tools/launcher.json` (game, url, size, sha256, and a `news` entry), `python3 tools/build.py`, push. No Linux build yet (the launcher says so on Linux).
 - Test: `tests/games_test.gd` (local copy of the site with latest.json + felony.json, see its header).
 
 ## Floppa Mystery (launcher 3.1, 2026-11-19; 3.1.1: the Patch notes button per game, `Game.notes`)
