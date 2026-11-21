@@ -54,6 +54,7 @@ enum Msg {
     Manifest { id: String, data: Option<Value>, play: bool },
     News { gen: u32, items: Vec<Value> },
     NewsImage { gen: u32, idx: usize, url: String, img: egui::ColorImage },
+    Background { id: String, img: egui::ColorImage },
     Progress(u64, u64),
     Installed { id: String, result: Result<(), String> },
     SelfUpdateFailed,
@@ -225,6 +226,13 @@ impl App {
         let mut bg = HashMap::new();
         for (k, bytes) in [("mining", &include_bytes!("../assets/bg.jpg")[..]), ("felony", &include_bytes!("../assets/bg_felony.jpg")[..]),
             ("mystery", &include_bytes!("../assets/bg_mystery.jpg")[..])] {
+            // 3.1.4: the site's main picture from the last time (cache\bg), else the picture built into the launcher
+            let cached = image::open(data_dir().join("cache").join("bg").join(format!("{k}.png"))).ok();
+            if let Some(i) = cached.map(|i| i.to_rgba8()) {
+                let ci = egui::ColorImage::from_rgba_unmultiplied([i.width() as usize, i.height() as usize], &i);
+                bg.insert(k, ctx.load_texture(k, ci, egui::TextureOptions::LINEAR));
+                continue;
+            }
             if let Ok(i) = image::load_from_memory(bytes) {
                 let i = i.to_rgba8();
                 let ci = egui::ColorImage::from_rgba_unmultiplied([i.width() as usize, i.height() as usize], &i);
@@ -376,6 +384,38 @@ impl App {
     fn fetch_all(&mut self) {
         for g in GAMES.iter() { self.fetch(g.id, false); }
         self.fetch_news();
+        self.fetch_backgrounds();
+    }
+
+    /// 3.1.4: every game's background is the main picture of its website (the hero). It is kept in cache\bg with the
+    /// address and ETag it came from, and checked again with every update check: a new picture on the site (another
+    /// file, or the same file changed) shows up in the launcher; no internet = the last one (or the built-in one).
+    fn fetch_backgrounds(&self) {
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let dir = data_dir().join("cache").join("bg");
+            let _ = std::fs::create_dir_all(&dir);
+            for g in GAMES.iter() {
+                let Some(html) = get_bytes(g.home, 4 << 20).map(|b| String::from_utf8_lossy(&b).into_owned()) else { continue };
+                let Some(url) = hero_url(&html, g.home) else { continue };
+                let meta = dir.join(format!("{}.txt", g.id));
+                let old = std::fs::read_to_string(&meta).unwrap_or_default();
+                let mut lines = old.lines();
+                let (old_url, old_tag) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+                let have = dir.join(format!("{}.png", g.id)).exists();
+                let tag = if old_url == url && have { old_tag } else { "" };
+                let Some((code, body, etag)) = get_if_changed(&url, tag, 24 << 20) else { continue };
+                if code != 200 { continue; }      // 304: the picture we have is still the site's picture
+                let Ok(img) = image::load_from_memory(&body) else { continue };
+                let img = img.thumbnail(1280, 1280).to_rgba8();
+                if img.save(dir.join(format!("{}.png", g.id))).is_ok() {
+                    let _ = std::fs::write(&meta, format!("{url}\n{etag}\n"));
+                }
+                let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], &img);
+                let _ = tx.send(Msg::Background { id: g.id.to_string(), img: ci });
+                ctx.request_repaint();
+            }
+        });
     }
 
     fn fetch_news(&mut self) {
@@ -762,6 +802,10 @@ impl App {
                     2 => { self.show_window(); self.check_now(); }
                     _ => std::process::exit(0),
                 },
+                Msg::Background { id, img } => {
+                    let k = game(&id).id;
+                    self.bg.insert(k, self.ctx.load_texture(k, img, egui::TextureOptions::LINEAR));
+                }
                 Msg::Tick => {}
                 _ => {}
             }
@@ -894,7 +938,17 @@ impl App {
         let p = ui.painter().clone();
         p.rect_filled(full, CornerRadius::ZERO, Color32::from_rgb(0x0b, 0x0b, 0x0d));
         if let Some(t) = self.bg.get(self.cur.as_str()).or_else(|| self.bg.get("mining")) {
-            p.image(t.id(), full, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::from_rgb(140, 140, 153));
+            // fill the window without stretching: crop the picture's sides (or top and bottom) to the window's shape
+            let [w, h] = t.size();
+            let (img_a, win_a) = (w as f32 / h.max(1) as f32, full.width() / full.height());
+            let uv = if img_a > win_a {
+                let c = (1.0 - win_a / img_a) * 0.5;
+                Rect::from_min_max(Pos2::new(c, 0.0), Pos2::new(1.0 - c, 1.0))
+            } else {
+                let c = (1.0 - img_a / win_a) * 0.5;
+                Rect::from_min_max(Pos2::new(0.0, c), Pos2::new(1.0, 1.0 - c))
+            };
+            p.image(t.id(), full, uv, Color32::from_rgb(140, 140, 153));
         }
         // shade: light at the top, dark at the bottom
         let mut mesh = egui::Mesh::default();

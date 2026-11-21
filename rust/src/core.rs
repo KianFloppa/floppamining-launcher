@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.3"; // 3.1.3: Floppa Mystery is an open beta (tag and version label)
+pub const LAUNCHER_VERSION: &str = "3.1.4"; // 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -27,19 +27,20 @@ pub struct Game {
     pub exe: &'static str,
     pub site: &'static str,
     pub notes: &'static str,   // 3.1.1: the "Patch notes" button (a game without patch note pages links its download page)
+    pub home: &'static str,    // 3.1.4: the game's own website; its main picture (the hero) is the launcher's background
 }
 
 pub const GAMES: [Game; 3] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
-        notes: "https://floppamining.com/updates/" },
+        notes: "https://floppamining.com/updates/", home: "https://floppamining.com" },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
         news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com",
-        notes: "https://felony.floppaland.com/updates/" },
+        notes: "https://felony.floppaland.com/updates/", home: "https://felony.floppaland.com" },
     // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
     Game { id: "mystery", title: "Floppa Mystery", tag: "OPEN BETA", dir: "mystery", manifest: "/launcher/mystery.json",
         news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
-        notes: "https://floppamining.com/download/" },
+        notes: "https://floppamining.com/download/", home: "https://floppamystery.pages.dev" },
 ];
 
 pub fn game(id: &str) -> &'static Game {
@@ -248,6 +249,35 @@ pub fn get_json(url: &str) -> Option<serde_json::Value> {
     }
     let s = r.body_mut().with_config().limit(4 << 20).read_to_string().ok()?;
     serde_json::from_str(&s).ok()
+}
+
+/// 3.1.4: the main picture of a game's website: the first image marked fetchpriority="high" (every Floppa site marks
+/// its hero picture so, for loading speed). A full address, or a path on that site.
+pub fn hero_url(html: &str, home: &str) -> Option<String> {
+    let at = html.find("fetchpriority=\"high\"")?;
+    let start = html[..at].rfind("<img")?;
+    let tag = &html[start..at + 22];
+    let i = tag.find(" src=\"")? + 6;
+    let src = &tag[i..i + tag[i..].find('"')?];
+    if src.starts_with("http") { return Some(src.to_string()); }
+    let host_end = home.find("://").map(|k| k + 3).and_then(|k| home[k..].find('/').map(|e| k + e)).unwrap_or(home.len());
+    Some(format!("{}{}{}", &home[..host_end], if src.starts_with('/') { "" } else { "/" }, src))
+}
+
+/// A download that asks "changed since this ETag?": (status, body, the new ETag). 304 = not changed, no body.
+pub fn get_if_changed(url: &str, etag: &str, limit: u64) -> Option<(u16, Vec<u8>, String)> {
+    let mut q = agent().get(url);
+    if !etag.is_empty() {
+        q = q.header("if-none-match", etag);
+    }
+    let mut r = q.call().ok()?;
+    let code = r.status().as_u16();
+    let tag = r.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    if code != 200 {
+        return Some((code, vec![], tag));
+    }
+    let body = r.body_mut().with_config().limit(limit).read_to_vec().ok()?;
+    Some((code, body, tag))
 }
 
 pub fn get_bytes(url: &str, limit: u64) -> Option<Vec<u8>> {

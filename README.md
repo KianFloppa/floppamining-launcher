@@ -9,7 +9,7 @@ screenshots: `FloppaLauncher --site=http://127.0.0.1:8124 --no-self-update --ope
 Updating from Godot 2.x: the old launcher downloads the zip, swaps in the new exe and starts it; the Rust launcher waits
 for the old one to let go of port 47732 when a `.old` exe is next to it (it starts in milliseconds, Godot took seconds).
 
-(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows), since 2.5 **Floppa Felony** (public test) and since 3.1 **Floppa Mystery** (public test): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
+(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows), since 2.5 **Floppa Felony** (public test) and since 3.1 **Floppa Mystery** (open beta since 3.1.3): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
@@ -51,4 +51,16 @@ Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-lin
 - Release: in floppamystery-game bump `config/version`, export the presets "Windows" (`FloppaMystery.exe`, pck embedded)
   and "Linux" (`FloppaMystery.x86_64`), zip each as `FloppaMystery-<v>.zip` / `-linux.zip`, put them in `builds/`, push,
   then the `mystery` block in the site's `tools/launcher.json` + `python3 tools/build.py` + push.
-- Background: `rust/assets/bg_mystery.jpg` (floppamystery-game `tools/make_launcher_bg.gd`).
+- Background: see "Backgrounds" below.
+
+## Backgrounds (launcher 3.1.4, 2026-11-22)
+Each game's background is the **main picture of its own website** (`Game.home` in core.rs): the first `<img>` with
+`fetchpriority="high"` (the hero picture every Floppa site marks for loading speed).
+- Mining: floppamining.com, Felony: felony.floppaland.com, Mystery: floppamystery.pages.dev.
+- Checked at start and with every update check (10 min). Saved in `<data>\cache\bg\<id>.png` (1280 px) and
+  `<id>.txt` (picture address + ETag). A changed picture (new file, or same file changed: ETag) shows up by itself;
+  304 = unchanged, nothing downloaded again.
+- No internet: the last saved picture, else the built-in `rust/assets/bg.jpg`, `bg_felony.jpg`, `bg_mystery.jpg`
+  (copies of the site pictures of 2026-11-22; refresh them when a site gets a new main picture).
+- Drawn cropped to the window shape (never stretched), darkened like before.
+- **To change a launcher background: change the game site's main picture.** Nothing to do in the launcher.
