@@ -222,7 +222,7 @@ impl App {
         }
         let cfg = Cfg::load(data_dir().join("launcher.cfg"));
         let want = cfg.get_str("launcher", "game", "mining");
-        let cur = if GAMES.iter().any(|g| g.id == want) { want } else { "mining".into() };
+        let cur = if shown_games(cfg.get_bool("launcher", "hide_in_work", true)).iter().any(|g| g.id == want) { want } else { "mining".into() };
         let mut bg = HashMap::new();
         for (k, bytes) in [("mining", &include_bytes!("../assets/bg.jpg")[..]), ("felony", &include_bytes!("../assets/bg_felony.jpg")[..]),
             ("mystery", &include_bytes!("../assets/bg_mystery.jpg")[..])] {
@@ -993,7 +993,9 @@ impl App {
         }
 
         // game switcher
-        for (i, gg) in GAMES.iter().enumerate() {
+        // 3.1.6: only the games that show (Settings: "Hide in-work games"); one game alone needs no switcher
+        let shown = shown_games(self.cfg.get_bool("launcher", "hide_in_work", true));
+        for (i, gg) in shown.iter().enumerate().filter(|_| shown.len() > 1) {
             let r = Rect::from_min_size(Pos2::new(32.0 + i as f32 * 200.0, 130.0), Vec2::new(190.0, 44.0));
             let on = gg.id == self.cur;
             if button(ui, r, gg.title, 18.0, if on { Look::Gold } else { Look::Dark }, !self.busy || on).clicked() && !on {
@@ -1072,7 +1074,8 @@ impl App {
 
     fn draw_settings(&mut self, ui: &mut egui::Ui, gear: Rect) {
         let lin = IS_LINUX;
-        let toggles: [(&str, &str, &str, bool); 6] = [
+        let toggles: [(&str, &str, &str, bool); 7] = [
+            ("launcher", "hide_in_work", "Hide in-work games (public tests and betas)", true),
             ("launcher", "quit_on_play", "Quit the launcher when the game starts (off: it waits in the tray)", false),
             ("win", "notify", if lin { "Notifications for new updates" } else { "Windows notifications for new updates" }, false),
             ("win", "desktop", "Desktop shortcut", true),
@@ -1102,6 +1105,8 @@ impl App {
                 self.cfg.set_bool(sec, key, !on);
                 self.cfg.save();
                 if sec == "win" && key != "notify" { apply_system(&self.cfg); }
+                // turned on while an in-work game is open: back to the first game that still shows
+                if key == "hide_in_work" && !on && !self.busy && !shown_games(true).iter().any(|g| g.id == self.cur) { self.switch_game("mining"); }
                 if key == "notify" && !on { toast(APP_NAME, "Notifications are on. You'll get one when a new Floppa Mining update is out."); }
             }
             y += 32.0;

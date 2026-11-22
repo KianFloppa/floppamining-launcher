@@ -64,3 +64,9 @@ Each game's background is the **main picture of its own website** (`Game.home` i
   (copies of the site pictures of 2026-11-22; refresh them when a site gets a new main picture).
 - Drawn cropped to the window shape (never stretched), darkened like before.
 - **To change a launcher background: change the game site's main picture.** Nothing to do in the launcher.
+
+## Hide in-work games (launcher 3.1.6, 2026-11-22)
+Settings has "Hide in-work games (public tests and betas)", **on by default** (Kian: only Floppa Mining should show by
+default). `Game.in_work` in core.rs marks the games that are not finished (Felony, Mystery); `shown_games()` is the list
+the switcher draws. With one game showing there is no switcher row. A hidden game still shows on a PC where it is
+already installed, so updating the launcher takes nobody's game away. When a game is finished: set `in_work: false`.

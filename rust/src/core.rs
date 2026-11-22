@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.5"; // 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
+pub const LAUNCHER_VERSION: &str = "3.1.6"; // 3.1.6: "Hide in-work games" (Settings, on by default): only finished games show. 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -27,21 +27,32 @@ pub struct Game {
     pub exe: &'static str,
     pub site: &'static str,
     pub notes: &'static str,   // 3.1.1: the "Patch notes" button (a game without patch note pages links its download page)
+    pub in_work: bool,         // 3.1.6: not finished yet (public test, open beta): hidden while "Hide in-work games" is on
     pub home: &'static str,    // 3.1.4: the game's own website; its main picture (the hero) is the launcher's background
 }
 
 pub const GAMES: [Game; 3] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
-        notes: "https://floppamining.com/updates/", home: "https://floppamining.com" },
+        notes: "https://floppamining.com/updates/", in_work: false, home: "https://floppamining.com" },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
         news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com",
-        notes: "https://felony.floppaland.com/updates/", home: "https://felony.floppaland.com" },
+        notes: "https://felony.floppaland.com/updates/", in_work: true, home: "https://felony.floppaland.com" },
     // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
     Game { id: "mystery", title: "Floppa Mystery", tag: "OPEN BETA", dir: "mystery", manifest: "/launcher/mystery.json",
         news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
-        notes: "https://floppamining.com/download/", home: "https://floppamystery.pages.dev" },
+        notes: "https://floppamining.com/download/", in_work: true, home: "https://floppamystery.pages.dev" },
 ];
+
+/// The games the launcher shows (3.1.6). With "Hide in-work games" on (the default), a game that is not finished
+/// yet only shows if it is already installed on this PC, so nobody loses a game they play by updating the launcher.
+pub fn shown_games(hide_in_work: bool) -> Vec<&'static Game> {
+    GAMES.iter().filter(|g| !(hide_in_work && g.in_work) || has_files(g.id)).collect()
+}
+
+fn has_files(id: &str) -> bool {
+    std::fs::read_dir(game_dir(id)).map(|mut d| d.next().is_some()).unwrap_or(false)
+}
 
 pub fn game(id: &str) -> &'static Game {
     GAMES.iter().find(|g| g.id == id).unwrap_or(&GAMES[0])
