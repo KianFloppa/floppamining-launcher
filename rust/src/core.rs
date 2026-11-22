@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.4"; // 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
+pub const LAUNCHER_VERSION: &str = "3.1.5"; // 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -176,15 +176,33 @@ fn unescape(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------- versions
-/// "1.6.11" -> "Open Beta 1.6.11"; old prototype numbers (15.x, Felony 116) -> "Prototype ..."
+/// Floppa Mining: "1.6.11" -> "Open Beta 1.6.11"; old prototype numbers (15.x) -> "Prototype ...".
+/// 3.1.5 (Kian 2026-11-22: the full release is "Version 1.0"): builds 2.x.y are shown as "Version 1.x.y" ("2.0.0" ->
+/// "Version 1.0", "2.0.3" -> "Version 1.0.3"). The build number keeps counting up so old launchers and games still see
+/// each update as newer. Same rule as the game (scripts/game_version.gd), the site (patch notes "v") and the server.
 pub fn vname(v: &str) -> String {
+    let major: i64 = v.split('.').next().and_then(|x| x.parse().ok()).unwrap_or(0);
+    if major >= 10 { return format!("Prototype {v}"); }
+    if major < 2 { return format!("Open Beta {v}"); }
+    let mut p: Vec<String> = v.split('.').map(|x| x.to_string()).collect();
+    p[0] = (major - 1).to_string();
+    while p.len() > 2 && p.last().map(|x| x == "0").unwrap_or(false) { p.pop(); }
+    format!("Version {}", p.join("."))
+}
+
+/// Floppa Felony keeps the old names (its builds are numbered 116, 122 ...: "Prototype 122").
+fn vname_old(v: &str) -> String {
     let major: i64 = v.split('.').next().and_then(|x| x.parse().ok()).unwrap_or(0);
     format!("{}{v}", if major >= 10 { "Prototype " } else { "Open Beta " })
 }
 
 /// 3.1: the version's name for a game: Floppa Mystery's builds are "Test 0.1.0" (its patch notes use the same words).
 pub fn vname_for(game_id: &str, v: &str) -> String {
-    if game_id == "mystery" { format!("Open beta {v}") } else { vname(v) }
+    match game_id {
+        "mystery" => format!("Open beta {v}"),
+        "felony" => vname_old(v),
+        _ => vname(v),
+    }
 }
 
 /// 3.0.4: a release date ("2026-11-18") the short way: "today", "yesterday", "3 days ago", else "18 Nov 2026".

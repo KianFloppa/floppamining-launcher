@@ -45,5 +45,11 @@ fn versions() {
     assert!(core::newer("3.0", "2.5"));
     assert!(!core::newer("2.5", "3.0"));
     assert_eq!(core::vname("1.6.11"), "Open Beta 1.6.11");
+    assert_eq!(core::vname("2.0.0"), "Version 1.0");
+    assert_eq!(core::vname("2.0.3"), "Version 1.0.3");
+    assert_eq!(core::vname("2.1.0"), "Version 1.1");
+    assert_eq!(core::vname("15.4.5"), "Prototype 15.4.5");
+    assert_eq!(core::vname_for("felony", "122"), "Prototype 122");
+    assert!(core::newer("2.0.0", "1.7.9") && !core::newer("1.7.9", "2.0.0"));
     assert_eq!(core::vname("116"), "Prototype 116");
 }
