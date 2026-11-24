@@ -1,0 +1,44 @@
+# Signs the Floppa Mining Android app (2026-11-24, Kian: the signing key lives only in GitHub secrets).
+# A release pushes builds/FloppaMining-android-unsigned.apk (signed with a throw-away key); this job re-signs it with
+# the real key (secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASS / ANDROID_KEY_ALIAS) and replaces it with
+# builds/FloppaMining-android.apk, the file floppamining.com/download/android links to.
+# Runs only when that file changes (once per release); this repo is public, so it uses no paid Actions minutes.
+name: Sign Android app
+on:
+  push:
+    branches: [main]
+    paths: ["builds/FloppaMining-android-unsigned.apk"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: sign-android
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sign
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          test -n "$KS_B64" || { echo "secret ANDROID_KEYSTORE_B64 missing"; exit 1; }
+          test -f builds/FloppaMining-android-unsigned.apk || { echo "nothing to sign"; exit 0; }
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          "$BT/zipalign" -f -p 4 builds/FloppaMining-android-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.keystore" --ks-key-alias "$KS_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS --out builds/FloppaMining-android.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify --print-certs builds/FloppaMining-android.apk | grep -i "SHA-256 digest"
+          rm -f "$RUNNER_TEMP/release.keystore" builds/FloppaMining-android-unsigned.apk
+          sha256sum builds/FloppaMining-android.apk | cut -d' ' -f1 > builds/FloppaMining-android.apk.sha256
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A builds
+          git commit -m "Android app signed" || exit 0
+          git pull --rebase -q && git push
