@@ -1,6 +1,6 @@
 # Floppa Launcher
 
-**3.0 is written in Rust (`rust/`):** same screen, games, settings and files as the Godot launcher (main.gd, kept as the
+**3.0 is written in Rust (`rust/`; 3.2.0 adds FloppaChat, see "FloppaChat" at the end):** same screen, games, settings and files as the Godot launcher (main.gd, kept as the
 fallback until 3.0 is confirmed on Windows), but a ~5 MB exe instead of ~105 MB, no PowerShell, no game engine.
 Build: `cd rust && cargo build --release` (Linux) and `cargo build --release --target x86_64-pc-windows-gnu` (Windows,
 needs `mingw-w64`). Zip `FloppaLauncher.exe` / `FloppaLauncher.x86_64` as `builds/FloppaLauncher-<v>.zip` / `-linux.zip`.
@@ -70,3 +70,24 @@ Settings has "Hide in-work games (public tests and betas)", **on by default** (K
 default). `Game.in_work` in core.rs marks the games that are not finished (Felony, Mystery); `shown_games()` is the list
 the switcher draws. With one game showing there is no switcher row. A hidden game still shows on a PC where it is
 already installed, so updating the launcher takes nobody's game away. When a game is finished: set `in_work: false`.
+
+## FloppaChat (launcher 3.2.0, 2026-11-25)
+FloppaChat (the chat of the Floppa games, repo `KianFloppa/floppachat`, desktop app in `desktop/`) is an **app, not a
+game**: it never shows in the game switcher. It has its own button in the top bar, next to the settings.
+- Button: "💬 Get FloppaChat" (not installed) → downloads, checks the sha256, installs and opens it; "💬 FloppaChat" →
+  opens it, or brings an open one to the front; "💬 FloppaChat · update" → a new version is out; "· try again" → the
+  last download or start failed (hover for why).
+- **Updater:** with every update check (start, every 10 minutes) the launcher reads `floppamining.com/launcher/chat.json`
+  and installs a new FloppaChat by itself while FloppaChat is closed. An open FloppaChat is updated after it closes,
+  or right away with a click on the button (when it's closed).
+- Manifest `/launcher/chat.json` {version, url, size, sha256, exe, linux {url, size, sha256, exe}}, made by
+  floppatreasure-site `tools/pages.py` from the `chat` block of `tools/launcher.json` (never edit the file itself).
+- Installed in `<launcher folder>/floppachat` (`version.txt` next to it). FloppaChat holds 127.0.0.1:47740 while it runs
+  (one at a time; "show" there brings it to the front); the launcher uses that to know whether it's open.
+- Zips: `builds/FloppaChat-<v>.zip` (`FloppaChat.exe` + `WebView2Loader.dll`) and `-linux.zip` (`FloppaChat`).
+- Release a new FloppaChat app: in floppachat `desktop/` bump the version in Cargo.toml, build both (desktop/README.md),
+  zip, put the zips in `builds/`, push; then the `chat` block in floppatreasure-site `tools/launcher.json` +
+  `python3 tools/build.py` + push. Only needed when the window program changes: the chat itself is the web app at
+  chat.floppaland.com and updates without the launcher.
+- Test: `--open=chat` clicks the button as soon as the manifest is in (with `--site=` a local copy of the site files and
+  `--shot=`), see floppachat desktop/README.md.

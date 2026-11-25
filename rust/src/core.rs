@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.1.6"; // 3.1.6: "Hide in-work games" (Settings, on by default): only finished games show. 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
+pub const LAUNCHER_VERSION: &str = "3.2.0"; // 3.2.0: FloppaChat (the chat app) in the top bar: install, open, update (not a game). 3.1.6: 3.1.6: "Hide in-work games" (Settings, on by default): only finished games show. 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
@@ -424,15 +424,58 @@ pub fn installed_version(id: &str, exe: &str) -> String {
 
 /// Download, check and install a game build into its folder. Runs on a worker thread.
 pub fn install(id: &str, url: &str, sha: &str, version: &str, exe: &str, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
-    let zip = data_dir().join("download.zip");
+    install_into(&game_dir(id), "download.zip", url, sha, version, exe, progress)
+}
+
+// ---------------------------------------------------------------- FloppaChat (3.2): an app next to the games, not a game
+// The chat of the Floppa games (repo floppachat, desktop/). Its own manifest, its own folder, its own button in the top
+// bar; it never shows in the game switcher. It holds CHAT_PORT while it runs ("show" there brings it to the front).
+pub const CHAT_MANIFEST: &str = "/launcher/chat.json";
+pub const CHAT_PORT: u16 = 47740;
+
+pub fn chat_dir() -> PathBuf {
+    data_dir().join("floppachat")
+}
+
+pub fn chat_exe() -> &'static str {
+    if IS_LINUX { "FloppaChat" } else { "FloppaChat.exe" }
+}
+
+pub fn chat_installed() -> String {
+    let d = chat_dir();
+    if !d.join(chat_exe()).exists() {
+        return String::new();
+    }
+    fs::read_to_string(d.join("version.txt")).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+pub fn chat_running() -> bool {
+    port_held(CHAT_PORT)
+}
+
+/// Bring the open FloppaChat to the front.
+pub fn chat_show() {
+    if let Ok(mut s) = std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], CHAT_PORT)), Duration::from_millis(500)) {
+        let _ = s.write_all(b"show");
+    }
+}
+
+pub fn chat_start() -> Result<(), String> {
+    std::process::Command::new(chat_dir().join(chat_exe())).current_dir(chat_dir()).spawn()
+        .map(|_| ()).map_err(|_| "FloppaChat couldn't start. Click FloppaChat again to repair it.".to_string())
+}
+
+/// Download, check and unpack a zip into `dir` (a game or FloppaChat). Runs on a worker thread.
+pub fn install_into(dir: &Path, zip_name: &str, url: &str, sha: &str, version: &str, exe: &str, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
+    let zip = data_dir().join(zip_name);
     let _ = fs::remove_file(&zip);
     download(url, &zip, progress)?;
     if !sha.is_empty() && sha256_file(&zip) != sha.to_lowercase() {
         let _ = fs::remove_file(&zip);
         return Err("The download was damaged. Click to try again.".into());
     }
-    let dir = game_dir(id);
-    let tmp = dir.with_file_name(format!("{}_new", game(id).dir));
+    let dir = dir.to_path_buf();
+    let tmp = dir.with_file_name(format!("{}_new", dir.file_name().and_then(|n| n.to_str()).unwrap_or("app")));
     let r = extract(&zip, &tmp);
     let _ = fs::remove_file(&zip);
     if let Err(e) = r {

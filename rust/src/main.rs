@@ -63,6 +63,9 @@ enum Msg {
     Update(String), // the game that asked (3.1)
     Tray(u8), // 0 open, 1 play, 2 check, 3 quit
     Tick,
+    ChatManifest(Option<Value>),          // 3.2: FloppaChat's manifest (chat.json)
+    ChatProgress(u64, u64),
+    ChatInstalled { result: Result<(), String>, open: bool },
 }
 
 #[derive(PartialEq, Clone)]
@@ -130,6 +133,12 @@ struct App {
     hidden: bool,
     panel_h: f32,
     quit_at: Option<Instant>,
+    chat: Value,                 // 3.2: FloppaChat's manifest for this system (null: not loaded / none for it)
+    chat_installed: String,
+    chat_busy: bool,
+    chat_prog: Option<(u64, u64)>,
+    chat_click: bool,
+    chat_err: String,            // the last FloppaChat problem (shown on its button until the next try)
     #[cfg(windows)]
     _tray: Option<tray_icon::TrayIcon>,
 }
@@ -248,6 +257,7 @@ impl App {
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
             hidden: arg("--tray"), quit_at: None, panel_h: 420.0,
+            chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_err: String::new(),
             #[cfg(windows)]
             _tray: None,
         };
@@ -262,6 +272,7 @@ impl App {
             Some("settings") => app.settings_open = true,
             Some("login") => app.page = Page::Login,
             Some("signup") => app.page = Page::Signup,
+            Some("chat") => app.chat_click = true,       // 3.2: click the FloppaChat button as soon as its manifest is in
             _ => {}
         }
         app
@@ -383,6 +394,7 @@ impl App {
 
     fn fetch_all(&mut self) {
         for g in GAMES.iter() { self.fetch(g.id, false); }
+        self.fetch_chat();
         self.fetch_news();
         self.fetch_backgrounds();
     }
@@ -540,6 +552,77 @@ impl App {
     }
 
     // ------------------------------------------------------------ install / play
+    // ---------------------------------------------------------------- FloppaChat (3.2)
+    fn fetch_chat(&self) {
+        let (tx, ctx, url) = (self.tx.clone(), self.ctx.clone(), format!("{}{}", site(), CHAT_MANIFEST));
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::ChatManifest(get_json(&url)));
+            ctx.request_repaint();
+        });
+    }
+
+    fn on_chat_manifest(&mut self, d: Option<Value>) {
+        self.chat = d.as_ref().and_then(Self::for_platform).filter(|m| m.get("version").is_some() && m.get("url").is_some()).unwrap_or(Value::Null);
+        self.chat_installed = chat_installed();
+        // the updater: a new FloppaChat installs by itself while it is closed (an open one is updated next time)
+        if !self.chat_installed.is_empty() && self.chat_update() && !self.chat_busy && !chat_running() {
+            self.chat_install(false);
+        }
+        if std::mem::take(&mut self.chat_click) { self.on_chat(); }
+    }
+
+    fn chat_update(&self) -> bool {
+        let v = self.chat["version"].as_str().unwrap_or("");
+        !v.is_empty() && v != self.chat_installed
+    }
+
+    fn chat_install(&mut self, open: bool) {
+        let m = self.chat.clone();
+        let (url, sha, ver) = (m["url"].as_str().unwrap_or("").to_string(), m["sha256"].as_str().unwrap_or("").to_string(), m["version"].as_str().unwrap_or("").to_string());
+        if url.is_empty() { return; }
+        self.chat_busy = true;
+        self.chat_err.clear();
+        self.chat_prog = Some((0, m["size"].as_u64().unwrap_or(0)));
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let last = std::cell::Cell::new(Instant::now() - Duration::from_secs(1));
+            let p = |got: u64, total: u64| {
+                if last.get().elapsed() >= Duration::from_millis(250) {
+                    last.set(Instant::now());
+                    let _ = tx.send(Msg::ChatProgress(got, total));
+                    ctx.request_repaint();
+                }
+            };
+            let result = install_into(&chat_dir(), "floppachat_download.zip", &url, &sha, &ver, chat_exe(), &p);
+            let _ = tx.send(Msg::ChatInstalled { result, open });
+            ctx.request_repaint();
+        });
+    }
+
+    /// The FloppaChat button: open it (or bring it to the front), install it, or update it first.
+    fn on_chat(&mut self) {
+        if self.chat_busy { return; }
+        if chat_running() { chat_show(); return; }
+        if self.chat_installed.is_empty() || self.chat_update() {
+            if self.chat.is_null() {
+                if self.chat_installed.is_empty() { self.chat_err = "FloppaChat couldn't be loaded. Check your internet and click again.".into(); self.fetch_chat(); return; }
+            } else {
+                self.chat_install(true);
+                return;
+            }
+        }
+        self.chat_err.clear();
+        if let Err(e) = chat_start() { self.chat_err = e; }
+    }
+
+    fn chat_label(&self) -> String {
+        if self.chat_busy {
+            return match self.chat_prog { Some((g, t)) if t > 0 => format!("💬 FloppaChat {}%", (g * 100 / t).min(100)), _ => "💬 FloppaChat ...".into() };
+        }
+        if !self.chat_err.is_empty() { return "💬 FloppaChat · try again".into(); }
+        if self.chat_installed.is_empty() { "💬 Get FloppaChat".into() } else if self.chat_update() { "💬 FloppaChat · update".into() } else { "💬 FloppaChat".into() }
+    }
+
     fn start_download(&mut self) {
         let m = self.manifest.clone();
         let (url, sha, ver) = (m["url"].as_str().unwrap_or("").to_string(), m["sha256"].as_str().unwrap_or("").to_string(), m["game"].as_str().unwrap_or("").to_string());
@@ -751,6 +834,18 @@ impl App {
         while let Ok(m) = self.rx.try_recv() {
             match m {
                 Msg::Manifest { id, data, play } => self.on_manifest_for(id, data, play),
+                Msg::ChatManifest(d) => self.on_chat_manifest(d),
+                Msg::ChatProgress(got, total) => self.chat_prog = Some((got, if total > 0 { total } else { self.chat["size"].as_u64().unwrap_or(0) })),
+                Msg::ChatInstalled { result, open } => {
+                    self.chat_busy = false;
+                    self.chat_prog = None;
+                    self.chat_installed = chat_installed();
+                    match result {
+                        Ok(()) if open => if let Err(e) = chat_start() { self.chat_err = e },
+                        Ok(()) => {}
+                        Err(e) => self.chat_err = e,
+                    }
+                }
                 Msg::News { gen, items } if gen == self.news_gen => {
                     self.news_loaded = true;
                     self.news = items.iter().map(|it| Card {
@@ -971,12 +1066,23 @@ impl App {
         if button(ui, gear, "⚙", 20.0, Look::Dark, true).clicked() { self.settings_open = !self.settings_open; }
         x -= 46.0 + 18.0;
         let acc_text = if !self.acc_name.is_empty() { format!("👤 {}", self.acc_name) } else if !self.acc_id.is_empty() { "👤 ...".into() } else { "Log in".into() };
-        let mut links: Vec<(String, u8)> = vec![("Website".into(), 0), (acc_text, 1), ("Patch notes".into(), 2)];
+        // 3.2: FloppaChat sits here, next to the settings, and never in the game switcher (it's an app, not a game)
+        let mut links: Vec<(String, u8)> = vec![(self.chat_label(), 3), ("Website".into(), 0), (acc_text, 1), ("Patch notes".into(), 2)];
         for (text, kind) in links.drain(..) {
             let w = p.layout_no_wrap(text.clone(), font(17.0), Color32::WHITE).size().x + 28.0;
             let r = Rect::from_min_size(Pos2::new(x - w, 29.0), Vec2::new(w, 36.0));
-            if button(ui, r, &text, 17.0, Look::Dark, true).clicked() {
+            let resp = button(ui, r, &text, 17.0, Look::Dark, true);
+            let resp = if kind == 3 {
+                let tip = if !self.chat_err.is_empty() { self.chat_err.clone() } else if self.chat_installed.is_empty() {
+                    format!("The chat of the Floppa games: servers, direct messages and voice calls with your Floppa account.\nClick to install it ({}).", if self.chat["size"].as_u64().unwrap_or(0) > 0 { mb(self.chat["size"].as_u64().unwrap_or(0)) } else { "a few MB".into() })
+                } else if self.chat_update() {
+                    format!("FloppaChat {} is out (you have {}). It updates by itself while FloppaChat is closed, or now when you click.", self.chat["version"].as_str().unwrap_or(""), self.chat_installed)
+                } else { format!("Open FloppaChat {}", self.chat_installed) };
+                resp.on_hover_text(tip)
+            } else { resp };
+            if resp.clicked() {
                 match kind {
+                    3 => self.on_chat(),
                     0 => open_url(&format!("{}/", g.site)),
                     1 => { self.page = if self.acc_id.is_empty() { Page::Login } else { Page::Account }; self.f_msg.clear(); }
                     _ => open_url(g.notes),
