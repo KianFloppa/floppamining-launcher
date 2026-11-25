@@ -127,3 +127,9 @@ Never push a Windows zip from a session: the workflow skips a version whose zip 
 - False positives: submit the flagged file as "Software developer" at https://www.microsoft.com/en-us/wdsi/filesubmission.
   Microsoft has no allow-list program; reputation builds from telemetry, and each new version is new to it
   (learn.microsoft.com/defender-xdr/developer-faq). Submit every new launcher version that gets flagged.
+
+## Open: icon leftovers (Kian, 2026-11-25 19:42, "just note that down, no need to fix that yet")
+- The taskbar right-click menu still shows the OLD cat icon next to "Floppa Launcher" (the taskbar button itself shows
+  the new arrow). Likely Windows' cached icon of the pinned shortcut / jump list; not checked yet.
+- The new icon's yellow (255, 200, 40) is not the same colour as FloppaChat's icon. Match it to FloppaChat's exact
+  colour (floppachat desktop/assets/icon64.png) when this is picked up.
