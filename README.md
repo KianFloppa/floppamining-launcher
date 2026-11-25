@@ -111,3 +111,13 @@ info (KianFloppa, version = Cargo.toml) and commits `builds/FloppaLauncher-<vers
 Launcher release now: bump `version` in `rust/Cargo.toml`, push, wait for the workflow (about 5-8 min), `git pull`,
 then the site's `tools/launcher.json` (url, size, sha256 of that zip) as before. Build the Linux zip here as before.
 Never push a Windows zip from a session: the workflow skips a version whose zip already exists.
+
+### Code signing (researched 2026-11-25, nothing bought; Kian decides)
+- Microsoft's own service is **Artifact Signing** (renamed from Trusted Signing). Basic plan **$9.99 a month** for up to
+  5,000 signatures (azure.microsoft.com/products/trusted-signing, checked 2026-11-25). Billing starts when the account
+  is created. It needs an Azure subscription and an identity check; **who may sign up (individuals vs. organisations,
+  which countries) was not confirmed** in this check and must be read on Microsoft's page before deciding.
+- Other route: a classic code-signing certificate from a certificate authority, paid yearly, on a hardware key.
+- False positives: submit the flagged file as "Software developer" at https://www.microsoft.com/en-us/wdsi/filesubmission.
+  Microsoft has no allow-list program; reputation builds from telemetry, and each new version is new to it
+  (learn.microsoft.com/defender-xdr/developer-faq). Submit every new launcher version that gets flagged.
