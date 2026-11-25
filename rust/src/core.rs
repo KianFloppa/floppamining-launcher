@@ -506,7 +506,8 @@ pub fn set_runnable(_p: &Path) {}
 // ---------------------------------------------------------------- self-update
 /// Windows and Linux let a running program be renamed: rename ourselves to .old, put the new exe in our place,
 /// start it and quit. The new launcher deletes the .old file when it starts.
-pub fn self_update(url: &str, sha: &str) -> Result<(), String> {
+/// 3.5: download and check the new launcher next to this one as "<exe>.new" (nothing is replaced yet).
+pub fn self_update_prepare(url: &str, sha: &str) -> Result<PathBuf, String> {
     let zip = data_dir().join("launcher_update.zip");
     download(url, &zip, &|_, _| {})?;
     if !sha.is_empty() && sha256_file(&zip) != sha.to_lowercase() {
@@ -528,16 +529,35 @@ pub fn self_update(url: &str, sha: &str) -> Result<(), String> {
         return Err("no launcher in the zip".into());
     }
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let new = PathBuf::from(format!("{}.new", me.display()));
+    fs::write(&new, &data).map_err(|_| "couldn't write".to_string())?;
+    set_runnable(&new);
+    Ok(new)
+}
+
+/// 3.5: put the prepared launcher in place of this one (this exe becomes "<exe>.old", removed at the next start).
+/// restart: start the new one and quit; otherwise only swap (closing the launcher: the next start is the new one).
+pub fn self_update_apply(new: &Path, restart: bool) -> Result<(), String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let old = PathBuf::from(format!("{}.old", me.display()));
     let _ = fs::remove_file(&old);
     fs::rename(&me, &old).map_err(|e| e.to_string())?;
-    if fs::write(&me, &data).is_err() {
+    if fs::rename(new, &me).is_err() {
         let _ = fs::rename(&old, &me);
-        return Err("couldn't write".into());
+        return Err("couldn't put the new launcher in place".into());
     }
     set_runnable(&me);
-    let _ = std::process::Command::new(&me).spawn();
-    std::process::exit(0);
+    if restart {
+        let _ = std::process::Command::new(&me).spawn();
+        std::process::exit(0);
+    }
+    Ok(())
+}
+
+/// Download, check, replace and restart in one go (right after the launcher starts, nothing to interrupt).
+pub fn self_update(url: &str, sha: &str) -> Result<(), String> {
+    let new = self_update_prepare(url, sha)?;
+    self_update_apply(&new, true)
 }
 
 pub fn remove_old_exe() {

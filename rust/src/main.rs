@@ -59,6 +59,7 @@ enum Msg {
     Progress(u64, u64),
     Installed { id: String, result: Result<(), String> },
     SelfUpdateFailed,
+    SelfUpdateReady(String, std::path::PathBuf),   // 3.5: downloaded and checked, waiting for a restart
     Api { kind: &'static str, code: u16, data: Value },
     Show,
     Update(String), // the game that asked (3.1)
@@ -103,6 +104,8 @@ struct App {
     installed: String,
     busy: bool,
     self_updating: bool,
+    update_ready: Option<(String, std::path::PathBuf)>,   // 3.5: a new launcher waits next to this one (version, path)
+    opened: Instant,
     check_failed: bool,
     status: String,
     progress: Option<(u64, u64)>,
@@ -258,7 +261,7 @@ impl App {
         }
         let mut app = App {
             tx, rx, ctx: ctx.clone(), cfg, cur, manifest: Value::Null, mstore: HashMap::new(), installed: String::new(),
-            busy: false, self_updating: false, check_failed: false, status: "Checking for updates...".into(), progress: None,
+            busy: false, self_updating: false, update_ready: None, opened: Instant::now(), check_failed: false, status: "Checking for updates...".into(), progress: None,
             speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
             news_loaded: false, bg, recheck_at: Instant::now() + Duration::from_secs(600), running_check_at: Instant::now(),
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
@@ -480,9 +483,15 @@ impl App {
             let lv = d.get("launcher").and_then(|v| v.as_str()).unwrap_or("0").to_string();
             // never twice in a row: right after an update (the .old exe still lies next to us) no new one, so a wrong
             // version number can't make a restart loop again (3.3.0/3.3.1)
-            if newer(&lv, LAUNCHER_VERSION) && self.self_update_ok && !self.busy && !self.self_updating && !just_updated() {
-                self.self_update(&d);
-                return;
+            // 3.5 (Kian): right after the start (nothing to interrupt) it updates and restarts by itself; found later
+            // while the launcher is open, it downloads in the background and asks: "click to restart". Never twice
+            // in a row by itself (3.3.0/3.3.1 loop): right after an update only the "ready" way.
+            if newer(&lv, LAUNCHER_VERSION) && self.self_update_ok && !self.self_updating && self.update_ready.is_none() {
+                if !self.busy && !just_updated() && !self.game_running && self.opened.elapsed() < Duration::from_secs(60) {
+                    self.self_update(&d);
+                    return;
+                }
+                self.self_update_background(&d);
             }
         }
         if id != self.cur {
@@ -756,6 +765,27 @@ impl App {
         });
     }
 
+    fn launcher_url_sha(d: &Value) -> (String, String) {
+        let url = d.get(if IS_LINUX { "linux" } else { "launcher_url" }).and_then(|v| if IS_LINUX { v.get("launcher_url") } else { Some(v) })
+            .and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let sha = (if IS_LINUX { d.get("linux").and_then(|l| l.get("launcher_sha256")) } else { d.get("launcher_sha256") })
+            .and_then(|v| v.as_str()).unwrap_or("").to_string();
+        (url, sha)
+    }
+
+    /// 3.5: download the new launcher while this one keeps working; the banner then offers the restart
+    fn self_update_background(&mut self, d: &Value) {
+        let (url, sha) = Self::launcher_url_sha(d);
+        if url.is_empty() { return; }
+        self.self_updating = true;   // no busy: the launcher stays usable
+        let ver = d["launcher"].as_str().unwrap_or("").to_string();
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(match self_update_prepare(&url, &sha) { Ok(p) => Msg::SelfUpdateReady(ver, p), Err(_) => Msg::SelfUpdateFailed });
+            ctx.request_repaint();
+        });
+    }
+
     fn maybe_notify(&mut self, d: &Value) {
         if !self.cfg.get_bool("win", "notify", false) { return; }
         let g = d["game"].as_str().unwrap_or("").to_string();
@@ -905,6 +935,7 @@ impl App {
                     self.self_updating = false;
                     self.busy = false; // the "new launcher" banner shows as a fallback
                 }
+                Msg::SelfUpdateReady(v, p) => { self.self_updating = false; self.update_ready = Some((v, p)); }
                 Msg::Api { kind, code, data } => self.on_api(kind, code, data),
                 Msg::Show => self.show_window(),
                 Msg::Update(g) => {
@@ -1028,6 +1059,8 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.to_tray(); // still checks for updates in the background
             } else {
+                // 3.5: a new launcher is ready: put it in place now, so the next start is the new one
+                if let Some((_, p)) = self.update_ready.take() { let _ = self_update_apply(&p, false); }
                 std::process::exit(0); // close for real: a download thread or the tray icon never keeps it alive
             }
         }
@@ -1140,9 +1173,18 @@ impl App {
         let tag_pos = if 32.0 + tw + 18.0 + tag_w <= x { Pos2::new(32.0 + tw + 18.0, 38.0) } else { Pos2::new(34.0, 66.0) };
         p.text(tag_pos, Align2::LEFT_TOP, tag, font(14.0), Color32::from_white_alpha(178));
 
-        // new-launcher banner (only if the self-update didn't work)
+        // 3.5: a new launcher is downloaded: one click restarts into it (closing the launcher also installs it)
         let lv = self.mstore.get("mining").and_then(|m| m.get("launcher")).and_then(|v| v.as_str()).unwrap_or("0").to_string();
-        if newer(&lv, LAUNCHER_VERSION) && !self.self_updating {
+        if let Some((v, path)) = self.update_ready.clone() {
+            let r = Rect::from_min_size(Pos2::new(32.0, 84.0), Vec2::new(1036.0, 36.0));
+            let can = !self.busy;
+            let text = if can { format!("Launcher {v} is ready: click to restart and update") } else { format!("Launcher {v} is ready: it installs when the download is done and you click here") };
+            if button(ui, r, &text, 15.0, Look::Gold, can).clicked() {
+                if let Err(e) = self_update_apply(&path, true) { self.status = format!("The update couldn't be put in place ({e}). Close and open the launcher."); self.update_ready = None; }
+            }
+        }
+        // new-launcher banner (only if the self-update didn't work)
+        else if newer(&lv, LAUNCHER_VERSION) && !self.self_updating {
             let r = Rect::from_min_size(Pos2::new(32.0, 84.0), Vec2::new(1036.0, 36.0));
             if button(ui, r, "A new launcher is out: click to download it", 15.0, Look::Dark, true).clicked() { open_url(&format!("{}/download/", site())); }
         }
