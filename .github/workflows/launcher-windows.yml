@@ -1,0 +1,71 @@
+# Builds the Windows Floppa Launcher on a real Windows machine with Microsoft's compiler (MSVC), Kian 2026-11-25.
+# Why: the exe cross-built on Linux (mingw) was flagged "Virus detected" by Windows Defender; MSVC builds are flagged
+# far less. This repo is public, so these Actions minutes are free (they don't count against the private-repo limit).
+#
+# When: a push that changes rust/ (or by hand). It builds the version in rust/Cargo.toml and commits
+# builds/FloppaLauncher-<version>.zip, but only if that zip isn't there yet: a released zip is never replaced
+# (the site's launcher.json holds its sha256, a changed zip would break every launcher's update check).
+# The Linux launcher is still built in the AI session as before.
+name: Build the Windows launcher (MSVC)
+on:
+  push:
+    branches: [main]
+    paths: ["rust/**"]
+  workflow_dispatch:
+    inputs:
+      test_only:
+        description: "Only build and upload it as an artifact (no commit), also when the zip exists"
+        type: boolean
+        default: false
+concurrency: launcher-windows
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rust
+            .github
+          sparse-checkout-cone-mode: true
+      - name: Version
+        id: v
+        shell: bash
+        run: |
+          V=$(grep -m1 '^version' rust/Cargo.toml | cut -d'"' -f2)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.test_only }}" = "true" ]; then echo "test build only"; echo "nocommit=1" >> "$GITHUB_OUTPUT";
+          elif git ls-tree -r --name-only HEAD -- "builds/FloppaLauncher-$V.zip" | grep -q .; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"; echo "builds/FloppaLauncher-$V.zip exists already: nothing to do"
+          fi
+      - name: Build (MSVC, static runtime)
+        if: steps.v.outputs.skip != '1'
+        working-directory: rust
+        run: cargo build --release --locked
+      - name: Check the version info and zip it
+        if: steps.v.outputs.skip != '1'
+        shell: pwsh
+        run: |
+          $exe = "rust/target/release/FloppaLauncher.exe"
+          $i = (Get-Item $exe).VersionInfo
+          "$($i.ProductName) | $($i.CompanyName) | $($i.FileVersion) | $($i.FileDescription)"
+          if ($i.CompanyName -ne "KianFloppa" -or $i.FileVersion -ne "${{ steps.v.outputs.v }}") { throw "version info missing or wrong" }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path $exe -DestinationPath "out/FloppaLauncher-${{ steps.v.outputs.v }}.zip" -CompressionLevel Optimal
+          Get-FileHash "out/FloppaLauncher-${{ steps.v.outputs.v }}.zip" -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        if: steps.v.outputs.skip != '1'
+        with:
+          name: FloppaLauncher-${{ steps.v.outputs.v }}-windows
+          path: out/*.zip
+      - name: Commit the zip
+        if: steps.v.outputs.skip != '1' && steps.v.outputs.nocommit != '1'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"; git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          mkdir -p builds; cp out/*.zip builds/
+          git add --sparse builds/FloppaLauncher-${{ steps.v.outputs.v }}.zip
+          git commit -m "Windows launcher ${{ steps.v.outputs.v }} built with MSVC [skip ci]"
+          for i in 1 2 3; do git pull --rebase -q && git push -q && exit 0; sleep 5; done; exit 1

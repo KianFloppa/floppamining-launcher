@@ -1,0 +1,4 @@
+# The Windows launcher is built with Microsoft's compiler (MSVC) on a Windows machine in GitHub Actions
+# (.github/workflows/launcher-windows.yml). Static C runtime: players must not need a "Visual C++ Redistributable".
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

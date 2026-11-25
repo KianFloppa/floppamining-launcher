@@ -102,3 +102,12 @@ Friends then see IN LAUNCHER in FloppaNet 1.11+ (account server 2.1 counts a bea
 - 3.4.0 (2026-11-25): FloppaChat 1.3 "Check for Updates > Update now": FloppaChat sends "chat" to the launcher port (or starts it with --open=chat) and closes; the launcher waits until it is closed (15 s at most), updates it and opens it again.
 - 3.4.1 (2026-11-25): the FloppaChat button shows FloppaChat's own icon (rust/assets/chat.png, a copy of floppachat desktop/assets/icon64.png) instead of the 💬 sign.
 - 3.5.0 (2026-11-25): self-update in two steps. Right after the start (first minute, nothing running) it updates and restarts by itself as before. Found later, or right after an update: it downloads the new launcher next to itself (<exe>.new, checked) and shows a gold "Launcher X is ready: click to restart and update"; closing the launcher puts it in place too (the next start is the new one). No automatic second update in a row, so a wrong version number can never loop again.
+
+## Windows build: MSVC in GitHub Actions (from the next version after 3.5.0, 2026-11-25)
+The Windows launcher is **no longer cross-built here with mingw** (3.4.1 from mingw was flagged "Virus detected" by
+Windows Defender). A push that changes `rust/` runs `.github/workflows/launcher-windows.yml` on a Windows machine:
+`cargo build --release --locked` with MSVC and a static C runtime (`rust/.cargo/config.toml`), checks the version
+info (KianFloppa, version = Cargo.toml) and commits `builds/FloppaLauncher-<version>.zip`. Free: this repo is public.
+Launcher release now: bump `version` in `rust/Cargo.toml`, push, wait for the workflow (about 5-8 min), `git pull`,
+then the site's `tools/launcher.json` (url, size, sha256 of that zip) as before. Build the Linux zip here as before.
+Never push a Windows zip from a session: the workflow skips a version whose zip already exists.
