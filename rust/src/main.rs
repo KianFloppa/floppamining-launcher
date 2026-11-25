@@ -51,6 +51,7 @@ fn news_thumb(url: &str) -> Option<image::RgbaImage> {
 fn abs(u: &str) -> String { if u.starts_with("http") { u.to_string() } else { format!("{}{u}", site()) } }
 
 enum Msg {
+    ChatAsk,   // 3.4: FloppaChat's "Update now": it closes, then we update it and open it again
     Manifest { id: String, data: Option<Value>, play: bool },
     News { gen: u32, items: Vec<Value> },
     NewsImage { gen: u32, idx: usize, url: String, img: egui::ColorImage },
@@ -139,6 +140,7 @@ struct App {
     chat_busy: bool,
     chat_prog: Option<(u64, u64)>,
     chat_click: bool,
+    chat_wait: Option<Instant>,  // 3.4: update FloppaChat as soon as it has closed (asked by FloppaChat, until then)
     chat_err: String,            // the last FloppaChat problem (shown on its button until the next try)
     #[cfg(windows)]
     _tray: Option<tray_icon::TrayIcon>,
@@ -216,7 +218,7 @@ impl App {
                     let n = s.read(&mut buf).unwrap_or(0);
                     let msg = String::from_utf8_lossy(&buf[..n]).to_string();
                     // "update" (Floppa Mining) or "update <game id>" (3.1: Floppa Mystery sends "update mystery")
-                    let _ = tx2.send(if let Some(rest) = msg.strip_prefix("update") {
+                    let _ = tx2.send(if msg.trim() == "chat" { Msg::ChatAsk } else if let Some(rest) = msg.strip_prefix("update") {
                         let g = rest.trim();
                         Msg::Update(if GAMES.iter().any(|x| x.id == g) { g.to_string() } else { "mining".to_string() })
                     } else { Msg::Show });
@@ -262,7 +264,7 @@ impl App {
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
             hidden: arg("--tray"), quit_at: None, here_at: None, panel_h: 420.0,
-            chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_err: String::new(),
+            chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_wait: None, chat_err: String::new(),
             #[cfg(windows)]
             _tray: None,
         };
@@ -277,7 +279,7 @@ impl App {
             Some("settings") => app.settings_open = true,
             Some("login") => app.page = Page::Login,
             Some("signup") => app.page = Page::Signup,
-            Some("chat") => app.chat_click = true,       // 3.2: click the FloppaChat button as soon as its manifest is in
+            Some("chat") => app.chat_wait = Some(Instant::now() + Duration::from_secs(15)),   // 3.4: as soon as FloppaChat is closed (3.2: at once)
             _ => {}
         }
         app
@@ -921,7 +923,14 @@ impl App {
                     let k = game(&id).id;
                     self.bg.insert(k, self.ctx.load_texture(k, img, egui::TextureOptions::LINEAR));
                 }
-                Msg::Tick => {}
+                Msg::ChatAsk => self.chat_wait = Some(Instant::now() + Duration::from_secs(15)),
+                Msg::Tick => {
+                    // 3.4: FloppaChat asked for its update and is closing: once it is gone, update and open it
+                    if let Some(until) = self.chat_wait {
+                        if !chat_running() { self.chat_wait = None; self.chat_click = true; self.fetch_chat(); }
+                        else if Instant::now() > until { self.chat_wait = None; chat_show(); }
+                    }
+                }
                 _ => {}
             }
         }
