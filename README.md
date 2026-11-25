@@ -98,3 +98,4 @@ every 60 s (`here_beat` in main.rs); hidden in the tray or with a game running i
 Friends then see IN LAUNCHER in FloppaNet 1.11+ (account server 2.1 counts a beat 150 s; a game always wins).
 - 3.3.1 (2026-11-25): the tag line ("FREE TO PLAY · WINDOWS EDITION") moves under the title when the top buttons need
   the room (it ran under them since the FloppaChat button).
+- 3.3.2 (2026-11-25): LAUNCHER_VERSION comes from Cargo.toml (3.3.0/3.3.1 still said 3.2.0 and updated themselves in a loop); never a second self-update right after one.

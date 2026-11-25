@@ -144,6 +144,9 @@ struct App {
     _tray: Option<tray_icon::TrayIcon>,
 }
 
+static JUST_UPDATED: OnceLock<bool> = OnceLock::new();
+fn just_updated() -> bool { *JUST_UPDATED.get().unwrap_or(&false) }
+
 fn main() -> eframe::Result<()> {
     if let Some(s) = arg_val("--site=") { let _ = SITE_URL.set(s); }
     if let Some(s) = arg_val("--api=") { let _ = API_URL.set(s); }
@@ -168,6 +171,7 @@ fn main() -> eframe::Result<()> {
             return Ok(());
         }
     };
+    let _ = JUST_UPDATED.set(just_updated);
     remove_old_exe();
     let icon = image::load_from_memory(include_bytes!("../assets/icon.png")).ok().map(|i| {
         let i = i.to_rgba8();
@@ -471,7 +475,9 @@ impl App {
             let d = data.clone().unwrap();
             self.mstore.insert("mining".into(), d.clone());
             let lv = d.get("launcher").and_then(|v| v.as_str()).unwrap_or("0").to_string();
-            if newer(&lv, LAUNCHER_VERSION) && self.self_update_ok && !self.busy && !self.self_updating {
+            // never twice in a row: right after an update (the .old exe still lies next to us) no new one, so a wrong
+            // version number can't make a restart loop again (3.3.0/3.3.1)
+            if newer(&lv, LAUNCHER_VERSION) && self.self_update_ok && !self.busy && !self.self_updating && !just_updated() {
                 self.self_update(&d);
                 return;
             }

@@ -9,7 +9,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const LAUNCHER_VERSION: &str = "3.2.0"; // 3.2.0: FloppaChat (the chat app) in the top bar: install, open, update (not a game). 3.1.6: 3.1.6: "Hide in-work games" (Settings, on by default): only finished games show. 3.1.5: Floppa Mining's full release shows as "Version 1.0" (vname). 3.1.4: backgrounds = each game site's main picture. 3.1.3: Floppa Mystery open beta
+/// From Cargo.toml (3.3.2: it was a second hand-kept number; 3.3.0/3.3.1 left it at 3.2.0 and updated themselves to
+/// themselves in a loop). Old notes: 3.2.0 FloppaChat button; 3.1.6 hide in-work games; 3.1.5 Mining "Version 1.0".
+pub const LAUNCHER_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_NAME: &str = "Floppa Launcher";
 pub const SITE: &str = "https://floppamining.com";
 pub const API: &str = "https://api.floppamining.com";
