@@ -104,6 +104,10 @@ Friends then see IN LAUNCHER in FloppaNet 1.11+ (account server 2.1 counts a bea
 - 3.5.0 (2026-11-25): self-update in two steps. Right after the start (first minute, nothing running) it updates and restarts by itself as before. Found later, or right after an update: it downloads the new launcher next to itself (<exe>.new, checked) and shows a gold "Launcher X is ready: click to restart and update"; closing the launcher puts it in place too (the next start is the new one). No automatic second update in a row, so a wrong version number can never loop again.
 
 ## Windows build: MSVC in GitHub Actions (since 3.5.1, 2026-11-25)
+**Status: on trial, not a proven rule yet.** 3.4.1 (mingw) was blocked with "Virus detected" on Kian's PC. MSVC builds
+are generally said to get fewer false alarms than mingw builds, but that is not measured for this launcher yet. Proof:
+compare 3.5.0 (mingw) and 3.5.1 (MSVC) on Kian's PC and on VirusTotal (number of engines that flag each). Keep MSVC
+only if 3.5.1 does clearly better; otherwise go back to the mingw build here and rely on reporting + signing.
 The Windows launcher is **no longer cross-built here with mingw** (3.4.1 from mingw was flagged "Virus detected" by
 Windows Defender). A push that changes `rust/` runs `.github/workflows/launcher-windows.yml` on a Windows machine:
 `cargo build --release --locked` with MSVC and a static C runtime (`rust/.cargo/config.toml`), checks the version
