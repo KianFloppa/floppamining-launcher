@@ -140,7 +140,8 @@ struct App {
     chat_busy: bool,
     chat_prog: Option<(u64, u64)>,
     chat_click: bool,
-    chat_wait: Option<Instant>,  // 3.4: update FloppaChat as soon as it has closed (asked by FloppaChat, until then)
+    chat_wait: Option<Instant>,
+    chat_icon: Option<egui::TextureHandle>,   // 3.4.1: FloppaChat's own icon on its button (was the 💬 sign)  // 3.4: update FloppaChat as soon as it has closed (asked by FloppaChat, until then)
     chat_err: String,            // the last FloppaChat problem (shown on its button until the next try)
     #[cfg(windows)]
     _tray: Option<tray_icon::TrayIcon>,
@@ -264,7 +265,7 @@ impl App {
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
             hidden: arg("--tray"), quit_at: None, here_at: None, panel_h: 420.0,
-            chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_wait: None, chat_err: String::new(),
+            chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_wait: None, chat_icon: None, chat_err: String::new(),
             #[cfg(windows)]
             _tray: None,
         };
@@ -626,10 +627,10 @@ impl App {
 
     fn chat_label(&self) -> String {
         if self.chat_busy {
-            return match self.chat_prog { Some((g, t)) if t > 0 => format!("💬 FloppaChat {}%", (g * 100 / t).min(100)), _ => "💬 FloppaChat ...".into() };
+            return match self.chat_prog { Some((g, t)) if t > 0 => format!("FloppaChat {}%", (g * 100 / t).min(100)), _ => "FloppaChat ...".into() };
         }
-        if !self.chat_err.is_empty() { return "💬 FloppaChat · try again".into(); }
-        if self.chat_installed.is_empty() { "💬 Get FloppaChat".into() } else if self.chat_update() { "💬 FloppaChat · update".into() } else { "💬 FloppaChat".into() }
+        if !self.chat_err.is_empty() { return "FloppaChat · try again".into(); }
+        if self.chat_installed.is_empty() { "Get FloppaChat".into() } else if self.chat_update() { "FloppaChat · update".into() } else { "FloppaChat".into() }
     }
 
     fn start_download(&mut self) {
@@ -1102,7 +1103,20 @@ impl App {
         for (text, kind) in links.drain(..) {
             let w = p.layout_no_wrap(text.clone(), font(17.0), Color32::WHITE).size().x + 28.0;
             let r = Rect::from_min_size(Pos2::new(x - w, 29.0), Vec2::new(w, 36.0));
-            let resp = button(ui, r, &text, 17.0, Look::Dark, true);
+            // 3.4.1: FloppaChat's button: its icon left of the text (room for it made with spaces, the text stays centred)
+            let shown = if kind == 3 { format!("        {text}") } else { text.clone() };
+            let (w, r) = if kind == 3 { let w = p.layout_no_wrap(shown.clone(), font(17.0), Color32::WHITE).size().x + 28.0; (w, Rect::from_min_size(Pos2::new(x - w, 29.0), Vec2::new(w, 36.0))) } else { (w, r) };
+            let resp = button(ui, r, &shown, 17.0, Look::Dark, true);
+            if kind == 3 {
+                let tex = self.chat_icon.get_or_insert_with(|| {
+                    let img = image::load_from_memory(include_bytes!("../assets/chat.png")).expect("chat icon").to_rgba8();
+                    let size = [img.width() as usize, img.height() as usize];
+                    ui.ctx().load_texture("chat-icon", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR)
+                }).clone();
+                let tw = p.layout_no_wrap(shown.clone(), font(17.0), Color32::WHITE).size().x;
+                let left = r.center().x - tw / 2.0;
+                p.image(tex.id(), Rect::from_center_size(Pos2::new(left + 10.0, r.center().y), Vec2::splat(20.0)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            }
             let resp = if kind == 3 {
                 let tip = if !self.chat_err.is_empty() { self.chat_err.clone() } else if self.chat_installed.is_empty() {
                     format!("The chat of the Floppa games: servers, direct messages and voice calls with your Floppa account.\nClick to install it ({}).", if self.chat["size"].as_u64().unwrap_or(0) > 0 { mb(self.chat["size"].as_u64().unwrap_or(0)) } else { "a few MB".into() })

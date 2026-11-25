@@ -100,3 +100,4 @@ Friends then see IN LAUNCHER in FloppaNet 1.11+ (account server 2.1 counts a bea
   the room (it ran under them since the FloppaChat button).
 - 3.3.2 (2026-11-25): LAUNCHER_VERSION comes from Cargo.toml (3.3.0/3.3.1 still said 3.2.0 and updated themselves in a loop); never a second self-update right after one.
 - 3.4.0 (2026-11-25): FloppaChat 1.3 "Check for Updates > Update now": FloppaChat sends "chat" to the launcher port (or starts it with --open=chat) and closes; the launcher waits until it is closed (15 s at most), updates it and opens it again.
+- 3.4.1 (2026-11-25): the FloppaChat button shows FloppaChat's own icon (rust/assets/chat.png, a copy of floppachat desktop/assets/icon64.png) instead of the 💬 sign.
