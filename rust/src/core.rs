@@ -598,6 +598,27 @@ pub fn open_folder(p: &Path) {
 }
 
 // ---------------------------------------------------------------- shortcuts, autostart (no PowerShell, no extra programs)
+/// Where Windows really keeps a folder (Desktop, Start menu programs), also when it was moved (OneDrive).
+#[cfg(windows)]
+fn known_folder(id: &windows_sys::core::GUID) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    let mut p: windows_sys::core::PWSTR = std::ptr::null_mut();
+    let hr = unsafe { windows_sys::Win32::UI::Shell::SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &mut p) };
+    if hr < 0 || p.is_null() {
+        if !p.is_null() {
+            unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(p as *const _) };
+        }
+        return None;
+    }
+    let mut n = 0usize;
+    while unsafe { *p.add(n) } != 0 {
+        n += 1;
+    }
+    let s = std::ffi::OsString::from_wide(unsafe { std::slice::from_raw_parts(p, n) });
+    unsafe { windows_sys::Win32::System::Com::CoTaskMemFree(p as *const _) };
+    Some(PathBuf::from(s))
+}
+
 pub fn apply_system(cfg: &Cfg) {
     let me = match std::env::current_exe() {
         Ok(m) => m,
@@ -605,22 +626,36 @@ pub fn apply_system(cfg: &Cfg) {
     };
     #[cfg(windows)]
     {
-        // Desktop + Start menu shortcuts, remade every start so they follow the launcher if it was moved
-        let desktop = std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Desktop"));
-        let programs = std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft/Windows/Start Menu/Programs"));
+        // Desktop + Start menu shortcuts, remade every start so they follow the launcher if it was moved.
+        // (3.5.3) The folders come from Windows itself (known folders): a Desktop moved to OneDrive is not
+        // %USERPROFILE%\Desktop, so the desktop shortcut was never made there. The shortcut is called "Floppa Launcher"
+        // (it was "Floppa Mining" from the time the launcher only had that game); the old one is removed.
+        // Afterwards Windows is told to refresh its icons, so a new launcher icon shows without a restart.
+        let desktop = known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Desktop)
+            .or_else(|| std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Desktop")));
+        let programs = known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Programs)
+            .or_else(|| std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft/Windows/Start Menu/Programs")));
         for (key, dir) in [("desktop", desktop), ("startmenu", programs)] {
             let Some(dir) = dir else { continue };
-            let lnk = dir.join("Floppa Mining.lnk");
+            let lnk = dir.join("Floppa Launcher.lnk");
+            let _ = fs::remove_file(dir.join("Floppa Mining.lnk"));
             if cfg.get_bool("win", key, true) {
+                let _ = fs::remove_file(&lnk);
                 if let Ok(mut l) = mslnk::ShellLink::new(&me) {
                     l.set_working_dir(me.parent().map(|p| p.display().to_string()));
                     l.set_icon_location(Some(me.display().to_string()));
                     l.set_name(Some(APP_NAME.to_string()));
-                    let _ = l.create_lnk(&lnk);
+                    if let Err(e) = l.create_lnk(&lnk) {
+                        eprintln!("shortcut {}: {e}", lnk.display());
+                    }
                 }
             } else {
                 let _ = fs::remove_file(&lnk);
             }
+        }
+        unsafe {
+            windows_sys::Win32::UI::Shell::SHChangeNotify(windows_sys::Win32::UI::Shell::SHCNE_ASSOCCHANGED as i32,
+                windows_sys::Win32::UI::Shell::SHCNF_IDLIST, std::ptr::null(), std::ptr::null());
         }
         // Start with Windows: only when the player turned it on (Settings)
         use winreg::enums::*;

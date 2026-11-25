@@ -1,6 +1,6 @@
 [package]
 name = "floppa-launcher"
-version = "3.5.2"
+version = "3.5.3"
 edition = "2021"
 description = "Floppa Launcher: installs, updates and starts the Floppa games"
 build = "build.rs"
@@ -24,7 +24,7 @@ notify-rust = "4"
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.21"
 winreg = "0.55"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com"] }
 raw-window-handle = "0.6"
 mslnk = "0.1"
 
