@@ -96,3 +96,5 @@ game**: it never shows in the game switcher. It has its own button in the top ba
 While the window shows and the game's login (account.cfg) is set, the launcher sends POST /v1/here {app: "launcher"}
 every 60 s (`here_beat` in main.rs); hidden in the tray or with a game running it sends one `leaving: true` and stops.
 Friends then see IN LAUNCHER in FloppaNet 1.11+ (account server 2.1 counts a beat 150 s; a game always wins).
+- 3.3.1 (2026-11-25): the tag line ("FREE TO PLAY · WINDOWS EDITION") moves under the title when the top buttons need
+  the room (it ran under them since the FloppaChat button).

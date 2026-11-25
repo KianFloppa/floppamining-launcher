@@ -1075,7 +1075,8 @@ impl App {
         let g = game(&self.cur);
         outlined(&p, Pos2::new(32.0, 20.0), g.title, 38.0, GOLD, 2.5);
         let tw = p.layout_no_wrap(g.title.into(), font(38.0), GOLD).size().x;
-        p.text(Pos2::new(32.0 + tw + 18.0, 38.0), Align2::LEFT_TOP, format!("{}  ·  {} EDITION", g.tag, edition().to_uppercase()), font(14.0), Color32::from_white_alpha(178));
+        let tag = format!("{}  ·  {} EDITION", g.tag, edition().to_uppercase());
+        let tag_w = p.layout_no_wrap(tag.clone(), font(14.0), Color32::WHITE).size().x;
         let mut x = 1068.0;
         let gear = Rect::from_min_size(Pos2::new(x - 46.0, 27.0), Vec2::new(46.0, 40.0));
         if button(ui, gear, "⚙", 20.0, Look::Dark, true).clicked() { self.settings_open = !self.settings_open; }
@@ -1105,6 +1106,10 @@ impl App {
             }
             x -= w + 18.0;
         }
+        // 3.3.1: the tag line next to the title only while it fits before the buttons (the FloppaChat button made the
+        // row longer: they overlapped); otherwise under the title
+        let tag_pos = if 32.0 + tw + 18.0 + tag_w <= x { Pos2::new(32.0 + tw + 18.0, 38.0) } else { Pos2::new(34.0, 66.0) };
+        p.text(tag_pos, Align2::LEFT_TOP, tag, font(14.0), Color32::from_white_alpha(178));
 
         // new-launcher banner (only if the self-update didn't work)
         let lv = self.mstore.get("mining").and_then(|m| m.get("launcher")).and_then(|v| v.as_str()).unwrap_or("0").to_string();
