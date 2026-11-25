@@ -133,6 +133,7 @@ struct App {
     hidden: bool,
     panel_h: f32,
     quit_at: Option<Instant>,
+    here_at: Option<Instant>,    // 3.3: last "launcher open" beat (POST /v1/here) while the window shows; None = none / left
     chat: Value,                 // 3.2: FloppaChat's manifest for this system (null: not loaded / none for it)
     chat_installed: String,
     chat_busy: bool,
@@ -256,7 +257,7 @@ impl App {
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
-            hidden: arg("--tray"), quit_at: None, panel_h: 420.0,
+            hidden: arg("--tray"), quit_at: None, here_at: None, panel_h: 420.0,
             chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_err: String::new(),
             #[cfg(windows)]
             _tray: None,
@@ -787,6 +788,19 @@ impl App {
         if id.is_empty() { self.acc_name.clear(); }
     }
 
+    /// 3.3: friends see IN LAUNCHER (FloppaNet) while the window shows and you are logged in: a beat every 60 s (the
+    /// account server counts one 150 s); hidden in the tray or with a game running = a "leaving" beat, then none.
+    fn here_beat(&mut self) {
+        let show = !self.hidden && !self.acc_id.is_empty() && !self.acc_token.is_empty();
+        if show && self.here_at.map_or(true, |t| t.elapsed() >= Duration::from_secs(60)) {
+            self.here_at = Some(Instant::now());
+            self.call("here", "POST", "/v1/here", Some(serde_json::json!({"app": "launcher"})));
+        } else if !show && self.here_at.is_some() {
+            self.here_at = None;
+            if !self.acc_id.is_empty() { self.call("here", "POST", "/v1/here", Some(serde_json::json!({"app": "launcher", "leaving": true}))); }
+        }
+    }
+
     fn call(&self, kind: &'static str, method: &'static str, path: &'static str, body: Option<Value>) {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         let (id, tok) = (self.acc_id.clone(), self.acc_token.clone());
@@ -1001,6 +1015,7 @@ impl eframe::App for App {
                 std::process::exit(0); // close for real: a download thread or the tray icon never keeps it alive
             }
         }
+        self.here_beat();
         if self.hidden && self.shot.is_none() {
             return; // in the tray: only the heartbeat wakes us (update checks, game running); nothing is drawn
         }
