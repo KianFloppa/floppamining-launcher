@@ -164,3 +164,11 @@ Kian: "linux the launcher: add the option where to install the files instead of 
   (`set_install_folder`, `Msg::FolderPicked`). Test: `cargo test --release --test install_dir_test`.
 - Windows: no row yet (the functions work there; only the folder dialog is missing).
 - Not tried on a real Linux desktop: the dialog was not clicked through, only the moving and the settings row were tested.
+
+### 3.5.5 (2026-11-26): the folder is asked before the first install
+Kian: "shouldnt the question of install place be asked before it auto places itself in share?" Until 3.5.4 the launcher
+started downloading into the default folder as soon as it opened. Now, on Linux, when no game is installed, no folder
+was picked and the question was never answered (`[launcher] install_asked`), a window asks first: **Choose a folder...**
+or **Use the default folder**. Nothing is downloaded before the answer. Cancelling the folder dialog or picking a folder
+that can't be written brings the question back. Players who already have a game installed are not asked.
+Picture mode: `--open=folder --shot=/tmp/x.png`. Code: `needs_folder_ask`, `draw_folder_ask` in `main.rs`.

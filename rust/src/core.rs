@@ -56,6 +56,11 @@ fn has_files(id: &str) -> bool {
     std::fs::read_dir(game_dir(id)).map(|mut d| d.next().is_some()).unwrap_or(false)
 }
 
+/// Is any game installed in the games folder in use? (3.5.5: a fresh Linux install asks for the folder first)
+pub fn any_game_installed() -> bool {
+    GAMES.iter().any(|g| has_files(g.id))
+}
+
 pub fn game(id: &str) -> &'static Game {
     GAMES.iter().find(|g| g.id == id).unwrap_or(&GAMES[0])
 }

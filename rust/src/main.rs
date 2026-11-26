@@ -131,6 +131,8 @@ struct App {
     recheck_at: Instant,
     running_check_at: Instant,
     settings_open: bool,
+    ask_folder: bool,       // 3.5.5 (Linux): the "where should the games go?" window before the first install
+    install_after_pick: bool,
     page: Page,
     f_name: String,
     f_pw: String,
@@ -279,6 +281,7 @@ impl App {
             busy: false, self_updating: false, update_ready: None, opened: Instant::now(), check_failed: false, status: "Checking for updates...".into(), progress: None,
             speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
             news_loaded: false, bg, recheck_at: Instant::now() + Duration::from_secs(600), running_check_at: Instant::now(),
+            ask_folder: false, install_after_pick: false,
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
@@ -296,6 +299,7 @@ impl App {
         if arg("--update") { app.check_now(); }
         match arg_val("--open=").as_deref() {      // screenshots for tests
             Some("settings") => app.settings_open = true,
+            Some("folder") => app.ask_folder = true,   // 3.5.5: the first-install question (Linux)
             Some("login") => app.page = Page::Login,
             Some("signup") => app.page = Page::Signup,
             Some("chat") => app.chat_wait = Some(Instant::now() + Duration::from_secs(15)),   // 3.4: as soon as FloppaChat is closed (3.2: at once)
@@ -561,7 +565,9 @@ impl App {
         self.check_failed = false;
         let g = d["game"].as_str().unwrap_or("").to_string();
         if !self.busy && !self.game_running && self.installed != g {
-            self.start_download(); // install / update the game right away
+            // 3.5.5 (Kian 2026-11-26: "shouldnt the question of install place be asked before it auto places itself
+            // in share?"): the very first install on Linux asks for the folder first, nothing is downloaded before
+            if self.needs_folder_ask() { self.ask_folder = true; } else { self.start_download(); } // install / update the game right away
         }
     }
 
@@ -938,11 +944,27 @@ impl App {
                     let left = if self.speed > 1000.0 && total > got { let s = ((total - got) as f64 / self.speed) as u64; format!(" · {}:{:02} left", s / 60, s % 60) } else { String::new() };
                     self.status = format!("Downloading {}: {} / {} · {:.1} MB/s{}", vname_for(&self.cur, self.manifest["game"].as_str().unwrap_or("")), mb(got), mb(total), self.speed / 1048576.0, left);
                 }
-                Msg::FolderPicked(r) => match r {
-                    None => self.status = "No folder dialog on this PC (zenity or kdialog). Start the launcher once with --install-dir=/your/folder instead.".into(),
-                    Some(None) => {}
-                    Some(Some(dir)) => self.set_install_folder(Some(dir)),
-                },
+                Msg::FolderPicked(r) => {
+                    let first = std::mem::take(&mut self.install_after_pick);   // came from the first-install question
+                    match r {
+                        None => {
+                            self.status = "No folder dialog on this PC (zenity or kdialog). Use the default, or start the launcher once with --install-dir=/your/folder.".into();
+                            self.ask_folder = first;
+                        }
+                        Some(None) => self.ask_folder = first,   // cancelled: the question again
+                        Some(Some(dir)) => {
+                            self.set_install_folder(Some(dir.clone()));
+                            let ok = self.cfg.get_str("launcher", "install_dir", "") == dir.to_string_lossy();
+                            if first && ok {
+                                self.cfg.set_bool("launcher", "install_asked", true);
+                                self.cfg.save();
+                                if !self.manifest.is_null() { self.start_download(); }
+                            } else if first {
+                                self.ask_folder = true;   // that folder didn't work (the status line says why)
+                            }
+                        }
+                    }
+                }
                 Msg::Installed { id, result } => {
                     self.busy = false;
                     self.progress = None;
@@ -1279,7 +1301,7 @@ impl App {
         let pr = Rect::from_min_size(Pos2::new(804.0, 552.0), Vec2::new(250.0, 66.0));
         if button(ui, pr, &btn_text, 30.0, Look::Gold, btn_on).clicked() {
             if self.manifest.is_null() || self.installed.is_empty() || online != self.installed {
-                if self.manifest.is_null() { self.on_play(); } else { self.start_download(); }
+                if self.manifest.is_null() { self.on_play(); } else if self.needs_folder_ask() { self.ask_folder = true; } else { self.start_download(); }
             } else {
                 self.on_play();
             }
@@ -1287,6 +1309,43 @@ impl App {
 
         if self.settings_open { self.draw_settings(ui, gear); }
         if self.page != Page::None { self.draw_account(ui); }
+        if self.ask_folder && self.page == Page::None { self.draw_folder_ask(ui); }
+    }
+
+    /// 3.5.5: Linux, nothing installed yet, no folder picked and never asked before.
+    fn needs_folder_ask(&self) -> bool {
+        IS_LINUX && self.shot.is_none() && !self.cfg.get_bool("launcher", "install_asked", false)
+            && self.cfg.get_str("launcher", "install_dir", "").is_empty() && !any_game_installed()
+    }
+
+    /// The question before the first install on Linux: pick a folder, or take the default. Asked once.
+    fn draw_folder_ask(&mut self, ui: &mut egui::Ui) {
+        let full = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 640.0));
+        let p = ui.painter().clone();
+        let _block = ui.allocate_rect(full, Sense::click()); // nothing behind the window can be clicked
+        p.rect_filled(full, CornerRadius::ZERO, Color32::from_black_alpha(178));
+        let panel = Rect::from_center_size(full.center(), Vec2::new(560.0, 270.0));
+        p.rect(panel, CornerRadius::same(14), Color32::from_rgb(16, 16, 21), Stroke::new(1.0_f32, Color32::from_white_alpha(40)), StrokeKind::Inside);
+        let x = panel.min.x + 28.0;
+        p.text(Pos2::new(x, panel.min.y + 24.0), Align2::LEFT_TOP, "Where should the games be installed?", font(24.0), Color32::WHITE);
+        p.text(Pos2::new(x, panel.min.y + 64.0), Align2::LEFT_TOP, "Pick your own folder (for example on another drive), or use the default.", font(15.0), Color32::from_white_alpha(190));
+        p.text(Pos2::new(x, panel.min.y + 86.0), Align2::LEFT_TOP, format!("Default: {}", short_path(&data_dir())), font(15.0), Color32::from_white_alpha(140));
+        p.text(Pos2::new(x, panel.min.y + 108.0), Align2::LEFT_TOP, "You can change it later in the settings (gear).", font(15.0), Color32::from_white_alpha(140));
+        let b1 = Rect::from_min_size(Pos2::new(x, panel.min.y + 150.0), Vec2::new(504.0, 46.0));
+        let b2 = Rect::from_min_size(Pos2::new(x, panel.min.y + 204.0), Vec2::new(504.0, 42.0));
+        if button(ui, b1, "Choose a folder...", 19.0, Look::Gold, true).clicked() {
+            self.ask_folder = false;
+            self.install_after_pick = true;
+            let (tx, ctx, start) = (self.tx.clone(), self.ctx.clone(), home());
+            self.status = "Pick a folder in the window that opened.".into();
+            std::thread::spawn(move || { let _ = tx.send(Msg::FolderPicked(pick_folder(&start))); ctx.request_repaint(); });
+        }
+        if button(ui, b2, "Use the default folder", 17.0, Look::Dark, true).clicked() {
+            self.ask_folder = false;
+            self.cfg.set_bool("launcher", "install_asked", true);
+            self.cfg.save();
+            if !self.manifest.is_null() { self.start_download(); }
+        }
     }
 
     /// 3.5.4 (Linux, Kian 2026-11-26): the games move to "<dir>/FloppaGames" (None = back to the launcher's own folder).
