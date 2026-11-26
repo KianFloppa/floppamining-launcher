@@ -148,3 +148,19 @@ Never push a Windows zip from a session: the workflow skips a version whose zip 
   the new arrow). Likely Windows' cached icon of the pinned shortcut / jump list; not checked yet.
 - The new icon's yellow (255, 200, 40) is not the same colour as FloppaChat's icon. Match it to FloppaChat's exact
   colour (floppachat desktop/assets/icon64.png) when this is picked up.
+
+## Install folder (launcher 3.5.4, 2026-11-26, Linux)
+Kian: "linux the launcher: add the option where to install the files instead of throwing it in .share".
+- Settings (gear) has a new row on Linux: **Install folder: <path> (click to change)**. It opens the desktop's folder
+  dialog (`zenity`, else `kdialog`). With neither installed the launcher says so; then start it once with
+  `--install-dir=/your/folder` (`--install-dir=` alone goes back to the default).
+- The games go to `<picked folder>/FloppaGames/<game>`: a folder of our own inside the picked one, so Uninstall and
+  Repair can never touch anything else in it. Installed games are moved along (rename, or copy then delete across
+  disks); nothing is downloaded again. A second row, "Install folder: back to the default", shows once a folder was picked.
+- Refused while a game runs or a download is going. A folder inside the launcher's own folder is refused.
+- Saved as `[launcher] install_dir` in `launcher.cfg`. The launcher's own files (settings, FloppaChat, login) stay in
+  `~/.local/share/FloppaMining`; only the games move. The game's saves and login are not in the install folder either.
+- Code: `core.rs` (`install_base`, `set_install_dir`, `check_install_dir`, `move_installs`, `pick_folder`), `main.rs`
+  (`set_install_folder`, `Msg::FolderPicked`). Test: `cargo test --release --test install_dir_test`.
+- Windows: no row yet (the functions work there; only the folder dialog is missing).
+- Not tried on a real Linux desktop: the dialog was not clicked through, only the moving and the settings row were tested.

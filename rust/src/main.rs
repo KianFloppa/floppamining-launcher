@@ -25,6 +25,14 @@ fn site() -> &'static str { SITE_URL.get().map(|s| s.as_str()).unwrap_or(SITE) }
 fn api_url() -> &'static str { API_URL.get().map(|s| s.as_str()).unwrap_or(API) }
 
 fn arg(a: &str) -> bool { std::env::args().any(|x| x == a) }
+/// A folder path short enough for one settings row: the home folder as ~, the middle cut out when it is long.
+fn short_path(p: &std::path::Path) -> String {
+    let mut t = p.to_string_lossy().to_string();
+    let h = home().to_string_lossy().to_string();
+    if !h.is_empty() && t.starts_with(&h) { t = format!("~{}", &t[h.len()..]); }
+    let c: Vec<char> = t.chars().collect();
+    if c.len() > 44 { format!("{}…{}", c[..18].iter().collect::<String>(), c[c.len() - 24..].iter().collect::<String>()) } else { t }
+}
 fn arg_val(p: &str) -> Option<String> { std::env::args().find_map(|x| x.strip_prefix(p).map(|s| s.to_string())) }
 
 /// News / image links: full addresses as they are, paths on the site.
@@ -68,6 +76,7 @@ enum Msg {
     ChatManifest(Option<Value>),          // 3.2: FloppaChat's manifest (chat.json)
     ChatProgress(u64, u64),
     ChatInstalled { result: Result<(), String>, open: bool },
+    FolderPicked(Option<Option<std::path::PathBuf>>),   // 3.5.4 (Linux): None = no dialog program, Some(None) = cancelled
 }
 
 #[derive(PartialEq, Clone)]
@@ -240,7 +249,13 @@ impl App {
                 c2.request_repaint();
             });
         }
-        let cfg = Cfg::load(data_dir().join("launcher.cfg"));
+        let mut cfg = Cfg::load(data_dir().join("launcher.cfg"));
+        // 3.5.4: where the games are installed (Settings, or --install-dir=/a/folder once; "" = the default again)
+        if let Some(d) = arg_val("--install-dir=") {
+            let ok = d.is_empty() || check_install_dir(std::path::Path::new(&d)).is_ok();
+            if ok { cfg.set_str("launcher", "install_dir", &d); cfg.save(); }
+        }
+        set_install_dir(&cfg.get_str("launcher", "install_dir", ""));
         let want = cfg.get_str("launcher", "game", "mining");
         let cur = if shown_games(cfg.get_bool("launcher", "hide_in_work", true)).iter().any(|g| g.id == want) { want } else { "mining".into() };
         let mut bg = HashMap::new();
@@ -923,6 +938,11 @@ impl App {
                     let left = if self.speed > 1000.0 && total > got { let s = ((total - got) as f64 / self.speed) as u64; format!(" · {}:{:02} left", s / 60, s % 60) } else { String::new() };
                     self.status = format!("Downloading {}: {} / {} · {:.1} MB/s{}", vname_for(&self.cur, self.manifest["game"].as_str().unwrap_or("")), mb(got), mb(total), self.speed / 1048576.0, left);
                 }
+                Msg::FolderPicked(r) => match r {
+                    None => self.status = "No folder dialog on this PC (zenity or kdialog). Start the launcher once with --install-dir=/your/folder instead.".into(),
+                    Some(None) => {}
+                    Some(Some(dir)) => self.set_install_folder(Some(dir)),
+                },
                 Msg::Installed { id, result } => {
                     self.busy = false;
                     self.progress = None;
@@ -1269,6 +1289,31 @@ impl App {
         if self.page != Page::None { self.draw_account(ui); }
     }
 
+    /// 3.5.4 (Linux, Kian 2026-11-26): the games move to "<dir>/FloppaGames" (None = back to the launcher's own folder).
+    /// Installed games are moved along, nothing is downloaded again.
+    fn set_install_folder(&mut self, dir: Option<std::path::PathBuf>) {
+        if self.busy || self.is_running() {
+            self.status = "Close the game and wait for downloads to finish, then change the folder.".into();
+            return;
+        }
+        if let Some(d) = &dir {
+            if let Err(e) = check_install_dir(d) { self.status = e; return; }
+        }
+        let from = install_base();
+        let to = match &dir { Some(d) => d.join(INSTALL_SUB), None => data_dir() };
+        match move_installs(&from, &to) {
+            Err(e) => self.status = e,
+            Ok(n) => {
+                let text = dir.as_ref().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+                self.cfg.set_str("launcher", "install_dir", &text);
+                self.cfg.save();
+                set_install_dir(&text);
+                self.installed = installed_version(&self.cur, self.exe_name());
+                self.status = format!("Games are now installed in {}{}", to.display(), if n > 0 { format!(" ({n} moved).") } else { ".".to_string() });
+            }
+        }
+    }
+
     fn draw_settings(&mut self, ui: &mut egui::Ui, gear: Rect) {
         let lin = IS_LINUX;
         let toggles: [(&str, &str, &str, bool); 7] = [
@@ -1280,7 +1325,12 @@ impl App {
             ("win", "autostart", if lin { "Start with the PC (in the tray)" } else { "Start with Windows (in the tray)" }, false),
             ("win", "tray_on_close", "Closing the window keeps it in the tray", false),
         ];
-        let actions = ["Check for updates", "Open the game folder", "Repair (download the game again)", "Uninstall the game"];
+        // 3.5.4 (Linux): where the games are installed, and back to the default when a folder was picked
+        let custom = !self.cfg.get_str("launcher", "install_dir", "").is_empty();
+        let folder_label = format!("Install folder: {} (click to change)", short_path(&install_base()));
+        let mut actions: Vec<&str> = vec!["Check for updates", "Open the game folder", "Repair (download the game again)", "Uninstall the game"];
+        if lin { actions.push(&folder_label); }
+        if lin && custom { actions.push("Install folder: back to the default"); }
         let w = 520.0;
         let h = 16.0 + toggles.len() as f32 * 32.0 + 12.0 + actions.len() as f32 * 32.0 + 12.0 + 30.0;
         let panel = Rect::from_min_size(Pos2::new(gear.max.x - w, gear.max.y + 6.0), Vec2::new(w, h));
@@ -1310,22 +1360,28 @@ impl App {
         }
         p.hline(panel.min.x + 10.0..=panel.max.x - 10.0, y + 5.0, Stroke::new(1.0_f32, Color32::from_white_alpha(30)));
         y += 12.0;
-        for (i, label) in actions.iter().enumerate() {
+        for (i, label) in actions.clone().into_iter().enumerate() {
             let r = Rect::from_min_size(Pos2::new(panel.min.x + 6.0, y), Vec2::new(w - 12.0, 30.0));
             let enabled = !(i >= 2 && self.busy);
             let resp = ui.allocate_rect(r, if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled { p.rect_filled(r, CornerRadius::same(6), Color32::from_white_alpha(14)); }
-            p.text(Pos2::new(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, *label, font(15.0), if enabled { Color32::WHITE } else { Color32::from_white_alpha(90) });
+            p.text(Pos2::new(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, label, font(15.0), if enabled { Color32::WHITE } else { Color32::from_white_alpha(90) });
             if resp.clicked() {
                 self.settings_open = false;
                 match i {
                     0 => self.check_now(),
                     1 => open_folder(&game_dir(&self.cur)),
                     2 => if !self.manifest.is_null() { self.start_download(); },
-                    _ => {
+                    3 => {
                         let _ = std::fs::remove_dir_all(game_dir(&self.cur));
                         self.installed.clear();
                     }
+                    4 => {
+                        let (tx, ctx, start) = (self.tx.clone(), self.ctx.clone(), home());
+                        self.status = "Pick a folder in the window that opened.".into();
+                        std::thread::spawn(move || { let _ = tx.send(Msg::FolderPicked(pick_folder(&start))); ctx.request_repaint(); });
+                    }
+                    _ => self.set_install_folder(None),
                 }
             }
             y += 32.0;

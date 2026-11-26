@@ -84,7 +84,101 @@ pub fn home() -> PathBuf {
 }
 
 pub fn game_dir(id: &str) -> PathBuf {
-    data_dir().join(game(id).dir)
+    install_base().join(game(id).dir)
+}
+
+// ---------------------------------------------------------------- install folder (3.5.4, Linux)
+// Kian 2026-11-26: "linux the launcher: add the option where to install the files instead of throwing it in .share".
+// launcher.cfg [launcher] install_dir = a folder the player picked ("" = the launcher's own folder, as before).
+// The games go into "<picked folder>/FloppaGames/<game>": a folder of our own inside the picked one, so Uninstall and
+// Repair can never touch anything else that is in the picked folder.
+static INSTALL_DIR: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+pub const INSTALL_SUB: &str = "FloppaGames";
+
+/// The folder that holds the games' folders: the picked one (+ FloppaGames) or the launcher's own.
+pub fn install_base() -> PathBuf {
+    match INSTALL_DIR.read().ok().and_then(|g| g.clone()) {
+        Some(p) => p.join(INSTALL_SUB),
+        None => data_dir(),
+    }
+}
+
+/// "" or a path that is not absolute = back to the launcher's own folder.
+pub fn set_install_dir(picked: &str) {
+    let p = PathBuf::from(picked.trim());
+    if let Ok(mut g) = INSTALL_DIR.write() {
+        *g = if picked.trim().is_empty() || !p.is_absolute() { None } else { Some(p) };
+    }
+}
+
+/// Can games be installed in this folder? Makes "<picked>/FloppaGames" and writes a test file there.
+pub fn check_install_dir(picked: &Path) -> Result<(), String> {
+    if !picked.is_absolute() {
+        return Err("Pick a full folder path (it has to start with /).".into());
+    }
+    if picked.starts_with(data_dir()) {
+        return Err("That folder is inside the launcher's own folder. Pick another one.".into());
+    }
+    let sub = picked.join(INSTALL_SUB);
+    fs::create_dir_all(&sub).map_err(|_| "Can't create a folder there (no permission?).".to_string())?;
+    let t = sub.join(".write_test");
+    fs::write(&t, b"ok").map_err(|_| "Can't write in that folder (no permission?).".to_string())?;
+    let _ = fs::remove_file(&t);
+    Ok(())
+}
+
+/// Moves every installed game from one games folder to another. A plain rename when both are on the same disk, else
+/// copy and then delete. A game that is already in the new place is left alone there. Returns how many were moved.
+pub fn move_installs(from: &Path, to: &Path) -> Result<usize, String> {
+    if from == to {
+        return Ok(0);
+    }
+    let mut n = 0;
+    for g in GAMES {
+        let (src, dst) = (from.join(g.dir), to.join(g.dir));
+        let has = |d: &Path| fs::read_dir(d).map(|mut x| x.next().is_some()).unwrap_or(false);
+        if !has(&src) || has(&dst) {
+            continue;
+        }
+        let _ = fs::remove_dir(&dst); // an empty folder would stop the rename
+        fs::create_dir_all(to).map_err(|_| "Can't create the new folder.".to_string())?;
+        if fs::rename(&src, &dst).is_err() {
+            copy_tree(&src, &dst).map_err(|_| format!("Couldn't copy {} to the new folder (is there enough space?). Nothing was removed.", g.title))?;
+            let _ = fs::remove_dir_all(&src);
+        }
+        n += 1;
+    }
+    Ok(n)
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for e in fs::read_dir(src)? {
+        let e = e?;
+        let to = dst.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_tree(&e.path(), &to)?;
+        } else {
+            fs::copy(e.path(), &to)?; // keeps the run permission
+        }
+    }
+    Ok(())
+}
+
+/// Asks for a folder with the desktop's own dialog (zenity on GNOME and most others, kdialog on KDE).
+/// None = no dialog program on this PC; Some(None) = cancelled. Blocks until the dialog closes: call it on a thread.
+pub fn pick_folder(start: &Path) -> Option<Option<PathBuf>> {
+    let st = start.to_string_lossy().to_string();
+    let tries: [(&str, Vec<String>); 2] = [
+        ("zenity", vec!["--file-selection".into(), "--directory".into(), "--title=Where should the Floppa games be installed?".into(), format!("--filename={st}/")]),
+        ("kdialog", vec!["--title".into(), "Where should the Floppa games be installed?".into(), "--getexistingdirectory".into(), st.clone()]),
+    ];
+    for (prog, args) in tries {
+        let Ok(out) = std::process::Command::new(prog).args(&args).output() else { continue };
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return Some(if out.status.success() && !p.is_empty() { Some(PathBuf::from(p)) } else { None });
+    }
+    None
 }
 
 /// Floppa Mining's own folder (its login file): %APPDATA%\Godot\app_userdata\Floppa Mining
