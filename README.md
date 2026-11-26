@@ -1,5 +1,20 @@
 # Floppa Launcher
 
+## What this is
+The **Floppa Launcher** is the free launcher of **[Floppa Mining](https://floppamining.com/)**, a free multiplayer
+mining game by KianFloppa: dig for treasure chests and ores, upgrade your tools, hatch and trade pets, on shared servers
+with up to 10 players. Full release (Version 1.0) on 22 November 2026.
+
+| Where | How |
+|---|---|
+| **Browser** | https://floppamining.com/play/ (no download, PC, phone or tablet) |
+| **Windows** | https://floppamining.com/download/ (this launcher) |
+| **Linux** | https://floppamining.com/download/ (this launcher) |
+| **Android** | https://floppamining.com/download/android/ (APK) |
+
+Patch notes: https://floppamining.com/updates/ · Guides: https://floppamining.com/guides/ · Worlds: https://floppamining.com/worlds/
+
+## For AI sessions and builds
 **3.0 is written in Rust (`rust/`; 3.2.0 adds FloppaChat, see "FloppaChat" at the end; 3.3.0 tells friends IN LAUNCHER, see the end):** same screen, games, settings and files as the Godot launcher (main.gd, kept as the
 fallback until 3.0 is confirmed on Windows), but a ~5 MB exe instead of ~105 MB, no PowerShell, no game engine.
 Build: `cd rust && cargo build --release` (Linux) and `cargo build --release --target x86_64-pc-windows-gnu` (Windows,
@@ -9,7 +24,7 @@ screenshots: `FloppaLauncher --site=http://127.0.0.1:8124 --no-self-update --ope
 Updating from Godot 2.x: the old launcher downloads the zip, swaps in the new exe and starts it; the Rust launcher waits
 for the old one to let go of port 47732 when a `.old` exe is next to it (it starts in milliseconds, Godot took seconds).
 
-(Called "Floppa Mining Launcher" until 1.7.) Small launcher for **Floppa Mining** (free to play, Windows), since 2.5 **Floppa Felony** (public test) and since 3.1 **Floppa Mystery** (open beta since 3.1.3): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
+(Called "Floppa Mining Launcher" until 1.7.) Launcher for **Floppa Mining** (free to play, Windows and Linux), since 2.5 **Floppa Felony** (public test) and since 3.1 **Floppa Mystery** (open beta since 3.1.3): switch games under the top bar. It installs the game, updates it and shows the newest patch notes.
 Download: https://floppamining.com/download/
 
 - Made with Godot 4.8 (`main.gd` is the whole launcher).
