@@ -68,6 +68,15 @@ Export preset "Linux" -> `FloppaLauncher.x86_64`, zip as `FloppaLauncher-<v>-lin
   then the `mystery` block in the site's `tools/launcher.json` + `python3 tools/build.py` + push.
 - Background: see "Backgrounds" below.
 
+## Floppa Bedwars (launcher 3.5.6, 2026-11-27, early test, in-work)
+- Manifest `floppamining.com/launcher/bedwars.json` + news `/launcher/bedwars_news.json`, made by floppatreasure-site
+  `tools/pages.py` from the `bedwars` block of `tools/launcher.json`. Versions show as "Early test 0.1.0".
+- Installed in `<launcher folder>/bedwars`. Lock port 127.0.0.1:47734 while it runs. Reads Floppa Mining's login file
+  when it has none of its own (shared account). Background: floppabedwars.pages.dev's hero (built-in `bg_bedwars.jpg`).
+- Release: in floppabedwars-game bump `config/version` + export presets "Windows" (`FloppaBedwars.exe`, pck embedded)
+  and "Linux" (`FloppaBedwars.x86_64`), zip as `FloppaBedwars-<v>.zip` / `-linux.zip` into `builds/`, push, then the
+  `bedwars` block in the site's `tools/launcher.json` + `python3 tools/build.py` + push.
+
 ## Backgrounds (launcher 3.1.4, 2026-11-22)
 Each game's background is the **main picture of its own website** (`Game.home` in core.rs): the first `<img>` with
 `fetchpriority="high"` (the hero picture every Floppa site marks for loading speed).

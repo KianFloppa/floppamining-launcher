@@ -262,7 +262,7 @@ impl App {
         let cur = if shown_games(cfg.get_bool("launcher", "hide_in_work", true)).iter().any(|g| g.id == want) { want } else { "mining".into() };
         let mut bg = HashMap::new();
         for (k, bytes) in [("mining", &include_bytes!("../assets/bg.jpg")[..]), ("felony", &include_bytes!("../assets/bg_felony.jpg")[..]),
-            ("mystery", &include_bytes!("../assets/bg_mystery.jpg")[..])] {
+            ("mystery", &include_bytes!("../assets/bg_mystery.jpg")[..]), ("bedwars", &include_bytes!("../assets/bg_bedwars.jpg")[..])] {
             // 3.1.4: the site's main picture from the last time (cache\bg), else the picture built into the launcher
             let cached = image::open(data_dir().join("cache").join("bg").join(format!("{k}.png"))).ok();
             if let Some(i) = cached.map(|i| i.to_rgba8()) {
@@ -701,6 +701,7 @@ impl App {
             let on = match g.id {
                 "mining" => mining_running(),
                 "mystery" => port_held(MYSTERY_LOCK_PORT) || child_game == "mystery",
+                "bedwars" => port_held(BEDWARS_LOCK_PORT) || child_game == "bedwars",
                 _ => child_game == g.id,
             };
             if on { return Some(g.title); }
@@ -760,6 +761,7 @@ impl App {
             // Felony and Mystery have no lock port: the launcher watches the process it started
             let cur = self.cur.clone();
             if cur == "mystery" && port_held(MYSTERY_LOCK_PORT) { return true; }   // also when started without the launcher
+            if cur == "bedwars" && port_held(BEDWARS_LOCK_PORT) { return true; }
             return match &mut self.child {
                 Some((id, c)) if *id == cur => matches!(c.try_wait(), Ok(None)),
                 _ => false,

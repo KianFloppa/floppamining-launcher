@@ -33,7 +33,7 @@ pub struct Game {
     pub home: &'static str,    // 3.1.4: the game's own website; its main picture (the hero) is the launcher's background
 }
 
-pub const GAMES: [Game; 3] = [
+pub const GAMES: [Game; 4] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
         notes: "https://floppamining.com/updates/", in_work: false, home: "https://floppamining.com" },
@@ -44,6 +44,11 @@ pub const GAMES: [Game; 3] = [
     Game { id: "mystery", title: "Floppa Mystery", tag: "OPEN BETA", dir: "mystery", manifest: "/launcher/mystery.json",
         news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
         notes: "https://floppamining.com/download/", in_work: true, home: "https://floppamystery.pages.dev" },
+    // 3.5.6 (2026-11-27): Floppa Bedwars, early test (manifest + news on floppamining.com, like Mystery); in-work: hidden
+    // while "Hide in-work games" is on (the default)
+    Game { id: "bedwars", title: "Floppa Bedwars", tag: "EARLY TEST", dir: "bedwars", manifest: "/launcher/bedwars.json",
+        news: "/launcher/bedwars_news.json", exe: "FloppaBedwars.exe", site: "https://floppabedwars.pages.dev",
+        notes: "https://floppabedwars.pages.dev/updates/", in_work: true, home: "https://floppabedwars.pages.dev" },
 ];
 
 /// The games the launcher shows (3.1.6). With "Hide in-work games" on (the default), a game that is not finished
@@ -312,6 +317,7 @@ fn vname_old(v: &str) -> String {
 pub fn vname_for(game_id: &str, v: &str) -> String {
     match game_id {
         "mystery" => format!("Open beta {v}"),
+        "bedwars" => format!("Early test {v}"),
         "felony" => vname_old(v),
         _ => vname(v),
     }
@@ -673,6 +679,8 @@ pub fn mining_running() -> bool {
 
 /// 3.1.2: Floppa Mystery holds this local port while it runs (like Mining's LOCK_PORT): one Floppa game at a time.
 pub const MYSTERY_LOCK_PORT: u16 = 47733;
+/// 3.5.6: Floppa Bedwars holds 47734 while it runs (it also refuses to start while Mining or Mystery runs).
+pub const BEDWARS_LOCK_PORT: u16 = 47734;
 
 pub fn port_held(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
