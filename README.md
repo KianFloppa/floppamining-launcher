@@ -211,3 +211,4 @@ Picture mode: `--open=folder --shot=/tmp/x.png`. Code: `needs_folder_ask`, `draw
 - Picture modes: `--open=games` (game menu), `--open=uninstall`, `--open=settings`, `--open=folder`.
 - **3.6.1** (Kian): "Hide in-work games" hides them even when installed (their files stay; turn it off to see them).
   The game menu has no icons (emoji look different on every PC) and no "you're here" (the title above says it).
+- **3.6.2** (Kian): an update card's title shows at most 3 lines; a longer one ends with "…" (`wrapped_max`), the card is a bit taller.

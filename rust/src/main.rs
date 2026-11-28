@@ -1119,6 +1119,16 @@ fn button(ui: &mut egui::Ui, rect: Rect, text: &str, size: f32, look: Look, enab
     r
 }
 
+/// 3.6.2 (Kian): an update card's title gets at most 3 lines, a longer one ends with "..." instead of running out of the card.
+fn wrapped_max(p: &egui::Painter, pos: Pos2, text: &str, size: f32, col: Color32, width: f32, rows: usize) {
+    let mut job = egui::text::LayoutJob::simple(text.to_string(), font(size), col, width);
+    job.wrap.max_rows = rows;
+    job.wrap.break_anywhere = false;
+    job.wrap.overflow_character = Some('…');
+    let g = p.layout_job(job);
+    p.galley(pos, g, col);
+}
+
 fn wrapped(p: &egui::Painter, pos: Pos2, text: &str, size: f32, col: Color32, width: f32) -> f32 {
     let g = p.layout(text.to_string(), font(size), col, width);
     let h = g.size().y;
@@ -1292,12 +1302,12 @@ impl App {
         }
         let mut open = None;
         for (i, c) in self.news.iter().enumerate() {
-            let r = Rect::from_min_size(Pos2::new(32.0 + i as f32 * 350.0, 326.0), Vec2::new(334.0, 176.0));
+            let r = Rect::from_min_size(Pos2::new(32.0 + i as f32 * 350.0, 322.0), Vec2::new(334.0, 188.0));
             let resp = ui.allocate_rect(r, Sense::click());
             let hover = resp.hovered();
             p.rect(r, CornerRadius::same(14), if hover { Color32::from_rgba_unmultiplied(31, 26, 15, 235) } else { PANEL }, Stroke::new(1.0_f32, if hover { GOLD } else { Color32::from_white_alpha(31) }), StrokeKind::Inside);
             if let Some(t) = &c.tex {
-                let ir = Rect::from_min_size(r.min + Vec2::new(1.0, 1.0), Vec2::new(332.0, 104.0));
+                let ir = Rect::from_min_size(r.min + Vec2::new(1.0, 1.0), Vec2::new(332.0, 96.0));
                 let sz = t.size_vec2();
                 let (ra, ia) = (ir.width() / ir.height(), sz.x / sz.y);
                 let uv = if ia > ra { let w = ra / ia; Rect::from_min_max(Pos2::new((1.0 - w) / 2.0, 0.0), Pos2::new((1.0 + w) / 2.0, 1.0)) }
@@ -1306,12 +1316,12 @@ impl App {
                 img.brush = Some(std::sync::Arc::new(egui::epaint::Brush { fill_texture_id: t.id(), uv }));
                 p.add(img);
             } else {   // 3.0.3: an update without a picture says so instead of an empty box
-                let ir = Rect::from_min_size(r.min + Vec2::new(1.0, 1.0), Vec2::new(332.0, 104.0));
+                let ir = Rect::from_min_size(r.min + Vec2::new(1.0, 1.0), Vec2::new(332.0, 96.0));
                 p.rect_filled(ir, CornerRadius { nw: 13, ne: 13, sw: 0, se: 0 }, Color32::from_rgb(20, 18, 15));
                 p.text(ir.center(), Align2::CENTER_CENTER, "No preview image for this update", font(13.0), Color32::from_white_alpha(90));
             }
-            p.text(r.min + Vec2::new(14.0, 112.0), Align2::LEFT_TOP, format!("{}  ·  {}", c.v, c.date), font(13.0), GOLD);
-            wrapped(&p, r.min + Vec2::new(14.0, 130.0), &c.title, 16.0, Color32::WHITE, 306.0);
+            p.text(r.min + Vec2::new(14.0, 104.0), Align2::LEFT_TOP, format!("{}  ·  {}", c.v, c.date), font(13.0), GOLD);
+            wrapped_max(&p, r.min + Vec2::new(14.0, 122.0), &c.title, 16.0, Color32::WHITE, 306.0, 3);
             if hover { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
             if resp.clicked() { open = Some(abs(&c.url)); }
         }

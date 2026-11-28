@@ -1,6 +1,6 @@
 [package]
 name = "floppa-launcher"
-version = "3.6.1"
+version = "3.6.2"
 edition = "2021"
 description = "Floppa Launcher: installs, updates and starts the Floppa games"
 build = "build.rs"
