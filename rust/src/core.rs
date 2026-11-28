@@ -31,24 +31,31 @@ pub struct Game {
     pub notes: &'static str,   // 3.1.1: the "Patch notes" button (a game without patch note pages links its download page)
     pub in_work: bool,         // 3.1.6: not finished yet (public test, open beta): hidden while "Hide in-work games" is on
     pub home: &'static str,    // 3.1.4: the game's own website; its main picture (the hero) is the launcher's background
+    pub kind: &'static str,    // 3.6.0: the game menu's second line ("Digging game · free to play"), like floppaland.com
+    pub color: [u8; 3],        // 3.6.0: its title colour in the game menu (the colours of floppaland.com's game menu)
+    pub icon: &'static str,
 }
 
 pub const GAMES: [Game; 4] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
-        notes: "https://floppamining.com/updates/", in_work: false, home: "https://floppamining.com" },
+        notes: "https://floppamining.com/updates/", in_work: false, home: "https://floppamining.com",
+        kind: "Digging game", color: [0xff, 0xd1, 0x66], icon: "⛏" },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
         news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com",
-        notes: "https://felony.floppaland.com/updates/", in_work: true, home: "https://felony.floppaland.com" },
+        notes: "https://felony.floppaland.com/updates/", in_work: true, home: "https://felony.floppaland.com",
+        kind: "Cops & robbers", color: [0xe0, 0x8a, 0x3c], icon: "🚓" },
     // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
     Game { id: "mystery", title: "Floppa Mystery", tag: "OPEN BETA", dir: "mystery", manifest: "/launcher/mystery.json",
         news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
-        notes: "https://floppamining.com/download/", in_work: true, home: "https://floppamystery.pages.dev" },
+        notes: "https://floppamining.com/download/", in_work: true, home: "https://floppamystery.pages.dev",
+        kind: "Murder mystery", color: [0xd8, 0xdc, 0xe4], icon: "🔪" },
     // 3.5.6 (2026-11-27): Floppa Bedwars, early test (manifest + news on floppamining.com, like Mystery); in-work: hidden
     // while "Hide in-work games" is on (the default)
     Game { id: "bedwars", title: "Floppa Bedwars", tag: "EARLY TEST", dir: "bedwars", manifest: "/launcher/bedwars.json",
         news: "/launcher/bedwars_news.json", exe: "FloppaBedwars.exe", site: "https://floppabedwars.pages.dev",
-        notes: "https://floppabedwars.pages.dev/updates/", in_work: true, home: "https://floppabedwars.pages.dev" },
+        notes: "https://floppabedwars.pages.dev/updates/", in_work: true, home: "https://floppabedwars.pages.dev",
+        kind: "Team battles", color: [0xff, 0x6b, 0x5e], icon: "⚔" },
 ];
 
 /// The games the launcher shows (3.1.6). With "Hide in-work games" on (the default), a game that is not finished
@@ -124,7 +131,7 @@ pub fn set_install_dir(picked: &str) {
 /// Can games be installed in this folder? Makes "<picked>/FloppaGames" and writes a test file there.
 pub fn check_install_dir(picked: &Path) -> Result<(), String> {
     if !picked.is_absolute() {
-        return Err("Pick a full folder path (it has to start with /).".into());
+        return Err("Pick a full folder path.".into());
     }
     if picked.starts_with(data_dir()) {
         return Err("That folder is inside the launcher's own folder. Pick another one.".into());
@@ -178,6 +185,12 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// Asks for a folder with the desktop's own dialog (zenity on GNOME and most others, kdialog on KDE).
 /// None = no dialog program on this PC; Some(None) = cancelled. Blocks until the dialog closes: call it on a thread.
 pub fn pick_folder(start: &Path) -> Option<Option<PathBuf>> {
+    // 3.6.0: Windows' own folder dialog (the same one Explorer uses)
+    #[cfg(windows)]
+    {
+        return Some(rfd::FileDialog::new().set_title("Where should the Floppa games be installed?").set_directory(start).pick_folder());
+    }
+    #[allow(unreachable_code)]
     let st = start.to_string_lossy().to_string();
     let tries: [(&str, Vec<String>); 2] = [
         ("zenity", vec!["--file-selection".into(), "--directory".into(), "--title=Where should the Floppa games be installed?".into(), format!("--filename={st}/")]),
@@ -726,81 +739,123 @@ fn known_folder(id: &windows_sys::core::GUID) -> Option<PathBuf> {
     Some(PathBuf::from(s))
 }
 
-pub fn apply_system(cfg: &Cfg) {
-    let me = match std::env::current_exe() {
-        Ok(m) => m,
-        Err(_) => return,
-    };
+// 3.6.0 (Kian 2026-11-28: "a checkmark would mean it has to create a new one if deleted automatically and that would be
+// virus like"): until 3.5.6 the desktop and Start menu shortcuts were made again at every start while their checkmark
+// was on, so a shortcut the player deleted came back. Now a shortcut is only made when the player asks for it (the
+// first-start window, or "Create ..." in the settings). An existing one is only refreshed (the launcher may have moved);
+// a deleted one stays deleted.
+pub const SHORTCUTS: [&str; 2] = ["desktop", "startmenu"];
+
+/// Where a shortcut lives: "desktop" or "startmenu" (Linux: the app menu).
+pub fn shortcut_path(key: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        // Desktop + Start menu shortcuts, remade every start so they follow the launcher if it was moved.
-        // (3.5.3) The folders come from Windows itself (known folders): a Desktop moved to OneDrive is not
-        // %USERPROFILE%\Desktop, so the desktop shortcut was never made there. The shortcut is called "Floppa Launcher"
-        // (it was "Floppa Mining" from the time the launcher only had that game); the old one is removed.
-        // Afterwards Windows is told to refresh its icons, so a new launcher icon shows without a restart.
-        let desktop = known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Desktop)
-            .or_else(|| std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Desktop")));
-        let programs = known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Programs)
-            .or_else(|| std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft/Windows/Start Menu/Programs")));
-        for (key, dir) in [("desktop", desktop), ("startmenu", programs)] {
-            let Some(dir) = dir else { continue };
-            let lnk = dir.join("Floppa Launcher.lnk");
-            let _ = fs::remove_file(dir.join("Floppa Mining.lnk"));
-            if cfg.get_bool("win", key, true) {
-                let _ = fs::remove_file(&lnk);
-                if let Ok(mut l) = mslnk::ShellLink::new(&me) {
-                    l.set_working_dir(me.parent().map(|p| p.display().to_string()));
-                    l.set_icon_location(Some(me.display().to_string()));
-                    l.set_name(Some(APP_NAME.to_string()));
-                    if let Err(e) = l.create_lnk(&lnk) {
-                        eprintln!("shortcut {}: {e}", lnk.display());
-                    }
-                }
-            } else {
-                let _ = fs::remove_file(&lnk);
-            }
+        let dir = match key {
+            "desktop" => known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Desktop)
+                .or_else(|| std::env::var_os("USERPROFILE").map(|u| PathBuf::from(u).join("Desktop"))),
+            "startmenu" => known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Programs)
+                .or_else(|| std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Microsoft/Windows/Start Menu/Programs"))),
+            _ => None,
+        };
+        dir.map(|d| d.join("Floppa Launcher.lnk"))
+    }
+    #[cfg(not(windows))]
+    {
+        let home = home();
+        match key {
+            "desktop" => Some(std::process::Command::new("xdg-user-dir").arg("DESKTOP").output().ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
+                .map(PathBuf::from).unwrap_or_else(|| home.join("Desktop")).join("floppa-launcher.desktop")),
+            "startmenu" => Some(home.join(".local/share/applications/floppa-launcher.desktop")),
+            _ => None,
         }
-        unsafe {
-            windows_sys::Win32::UI::Shell::SHChangeNotify(windows_sys::Win32::UI::Shell::SHCNE_ASSOCCHANGED as i32,
-                windows_sys::Win32::UI::Shell::SHCNF_IDLIST, std::ptr::null(), std::ptr::null());
+    }
+}
+
+pub fn shortcut_exists(key: &str) -> bool {
+    shortcut_path(key).map(|p| p.exists()).unwrap_or(false)
+}
+
+/// Makes (or remakes) one shortcut to this launcher.
+pub fn make_shortcut(key: &str) -> Result<(), String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let path = shortcut_path(key).ok_or("no folder for that shortcut")?;
+    write_shortcut(&me, &path, "")?;
+    refresh_icons();
+    Ok(())
+}
+
+pub fn remove_shortcut(key: &str) {
+    if let Some(p) = shortcut_path(key) { let _ = fs::remove_file(p); }
+    refresh_icons();
+}
+
+fn write_shortcut(me: &Path, path: &Path, extra: &str) -> Result<(), String> {
+    if let Some(d) = path.parent() { let _ = fs::create_dir_all(d); }
+    #[cfg(windows)]
+    {
+        let _ = extra;
+        let _ = fs::remove_file(path);
+        let mut l = mslnk::ShellLink::new(me).map_err(|e| e.to_string())?;
+        l.set_working_dir(me.parent().map(|p| p.display().to_string()));
+        l.set_icon_location(Some(me.display().to_string()));
+        l.set_name(Some(APP_NAME.to_string()));
+        l.create_lnk(path).map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let icon = data_dir().join("launcher_icon.png");
+        let _ = fs::create_dir_all(data_dir());
+        if !icon.exists() { let _ = fs::write(&icon, include_bytes!("../assets/tray.png")); }
+        let entry = format!("[Desktop Entry]\nType=Application\nName=Floppa Launcher\nComment=Install, update and play the Floppa games\nExec=\"{}\"{}\nIcon={}\nTerminal=false\nCategories=Game;\nStartupWMClass=Floppa Launcher\n", me.display(), extra, icon.display());
+        fs::write(path, entry).map_err(|e| e.to_string())?;
+        set_runnable(path);
+        Ok(())
+    }
+}
+
+fn refresh_icons() {
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::UI::Shell::SHChangeNotify(windows_sys::Win32::UI::Shell::SHCNE_ASSOCCHANGED as i32,
+            windows_sys::Win32::UI::Shell::SHCNF_IDLIST, std::ptr::null(), std::ptr::null());
+    }
+}
+
+/// Every start: existing shortcuts follow the launcher (it may have moved), "Start with Windows" as set.
+/// Never makes a shortcut the player didn't ask for.
+pub fn apply_system(cfg: &Cfg) {
+    let Ok(me) = std::env::current_exe() else { return };
+    #[cfg(windows)]
+    for key in SHORTCUTS {
+        if let Some(p) = shortcut_path(key) {
+            let _ = fs::remove_file(p.with_file_name("Floppa Mining.lnk"));   // the name before 3.5.3
+            if p.exists() { let _ = write_shortcut(&me, &p, ""); }
         }
-        // Start with Windows: only when the player turned it on (Settings)
+    }
+    #[cfg(not(windows))]
+    for key in SHORTCUTS {
+        if let Some(p) = shortcut_path(key) { if p.exists() { let _ = write_shortcut(&me, &p, ""); } }
+    }
+    set_autostart(cfg.get_bool("win", "autostart", false));
+}
+
+/// "Start with Windows / the PC (in the tray)": only when the player turned it on (Settings).
+pub fn set_autostart(on: bool) {
+    let Ok(me) = std::env::current_exe() else { return };
+    #[cfg(windows)]
+    {
         use winreg::enums::*;
         let hk = winreg::RegKey::predef(HKEY_CURRENT_USER);
         if let Ok((run, _)) = hk.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") {
-            if cfg.get_bool("win", "autostart", false) {
-                let _ = run.set_value("FloppaMiningLauncher", &format!("\"{}\" --tray", me.display()));
-            } else {
-                let _ = run.delete_value("FloppaMiningLauncher");
-            }
+            if on { let _ = run.set_value("FloppaMiningLauncher", &format!("\"{}\" --tray", me.display())); }
+            else { let _ = run.delete_value("FloppaMiningLauncher"); }
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(not(windows))]
     {
-        let home = home();
-        let icon = data_dir().join("launcher_icon.png");
-        let _ = fs::create_dir_all(data_dir());
-        let _ = fs::write(&icon, include_bytes!("../assets/tray.png"));
-        let desk = std::process::Command::new("xdg-user-dir").arg("DESKTOP").output().ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty())
-            .map(PathBuf::from).unwrap_or_else(|| home.join("Desktop"));
-        let files = [
-            (desk.join("floppa-launcher.desktop"), "desktop", true, ""),
-            (home.join(".local/share/applications/floppa-launcher.desktop"), "startmenu", true, ""),
-            (home.join(".config/autostart/floppa-launcher.desktop"), "autostart", false, " --tray"),
-        ];
-        for (path, key, def, extra) in files {
-            if cfg.get_bool("win", key, def) {
-                if let Some(p) = path.parent() {
-                    let _ = fs::create_dir_all(p);
-                }
-                let entry = format!("[Desktop Entry]\nType=Application\nName=Floppa Launcher\nComment=Install, update and play the Floppa games\nExec=\"{}\"{}\nIcon={}\nTerminal=false\nCategories=Game;\nStartupWMClass=Floppa Launcher\n", me.display(), extra, icon.display());
-                let _ = fs::write(&path, entry);
-                set_runnable(&path);
-            } else {
-                let _ = fs::remove_file(&path);
-            }
-        }
+        let p = home().join(".config/autostart/floppa-launcher.desktop");
+        if on { let _ = write_shortcut(&me, &p, " --tray"); } else { let _ = fs::remove_file(&p); }
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "floppa-launcher"
-version = "3.5.6"
+version = "3.6.0"
 edition = "2021"
 description = "Floppa Launcher: installs, updates and starts the Floppa games"
 build = "build.rs"
@@ -27,6 +27,7 @@ winreg = "0.55"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Com"] }
 raw-window-handle = "0.6"
 mslnk = "0.1"
+rfd = { version = "0.15", default-features = false }   # 3.6.0: the Windows folder dialog (first start: where to install)
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3", features = ["blocking"] }

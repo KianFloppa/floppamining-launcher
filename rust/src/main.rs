@@ -77,6 +77,7 @@ enum Msg {
     ChatProgress(u64, u64),
     ChatInstalled { result: Result<(), String>, open: bool },
     FolderPicked(Option<Option<std::path::PathBuf>>),   // 3.5.4 (Linux): None = no dialog program, Some(None) = cancelled
+    Online(Value),   // 3.6.0: players in each game right now (api /v1/online: {games: {mining: 5, ...}})
 }
 
 #[derive(PartialEq, Clone)]
@@ -132,7 +133,6 @@ struct App {
     running_check_at: Instant,
     settings_open: bool,
     ask_folder: bool,       // 3.5.5 (Linux): the "where should the games go?" window before the first install
-    install_after_pick: bool,
     page: Page,
     f_name: String,
     f_pw: String,
@@ -157,6 +157,16 @@ struct App {
     chat_wait: Option<Instant>,
     chat_icon: Option<egui::TextureHandle>,   // 3.4.1: FloppaChat's own icon on its button (was the 💬 sign)  // 3.4: update FloppaChat as soon as it has closed (asked by FloppaChat, until then)
     chat_err: String,            // the last FloppaChat problem (shown on its button until the next try)
+    online: HashMap<String, u64>,   // 3.6.0: players in-game per game, next to the title
+    online_at: Option<Instant>,
+    menu_open: bool,             // 3.6.0: the game menu under the title (like floppaland.com's)
+    confirm_uninstall: bool,     // 3.6.0: "Uninstall the game" asks first
+    setup_dir: Option<std::path::PathBuf>,   // 3.6.0: first start: the folder picked in the window (None = default)
+    setup_chat: bool,            // ... and its "Install FloppaChat" / shortcut checkmarks
+    setup_desk: bool,
+    setup_menu: bool,
+    setup_msg: String,           // why the picked folder can't be used
+    me_at: Option<Instant>,      // 3.6.0: the last /v1/me try (the name is asked again every 30 s until it is in)
     #[cfg(windows)]
     _tray: Option<tray_icon::TrayIcon>,
 }
@@ -281,12 +291,14 @@ impl App {
             busy: false, self_updating: false, update_ready: None, opened: Instant::now(), check_failed: false, status: "Checking for updates...".into(), progress: None,
             speed: 0.0, last_prog: (Instant::now(), 0), game_running: false, child: None, news: vec![], news_gen: 0, img_cache: HashMap::new(),
             news_loaded: false, bg, recheck_at: Instant::now() + Duration::from_secs(600), running_check_at: Instant::now(),
-            ask_folder: false, install_after_pick: false,
+            ask_folder: false,
             settings_open: false, page: Page::None, f_name: String::new(), f_pw: String::new(), f_pw2: String::new(),
             f_msg: String::new(), f_busy: false, acc_id: String::new(), acc_token: String::new(), acc_name: String::new(),
             self_update_ok: !arg("--no-self-update") && !cfg!(debug_assertions), shot: arg_val("--shot="), shot_at: None,
             hidden: arg("--tray"), quit_at: None, here_at: None, panel_h: 420.0,
             chat: Value::Null, chat_installed: chat_installed(), chat_busy: false, chat_prog: None, chat_click: false, chat_wait: None, chat_icon: None, chat_err: String::new(),
+            online: HashMap::new(), online_at: None, menu_open: false, confirm_uninstall: false,
+            setup_dir: None, setup_chat: true, setup_desk: true, setup_menu: true, setup_msg: String::new(), me_at: None,
             #[cfg(windows)]
             _tray: None,
         };
@@ -299,7 +311,9 @@ impl App {
         if arg("--update") { app.check_now(); }
         match arg_val("--open=").as_deref() {      // screenshots for tests
             Some("settings") => app.settings_open = true,
-            Some("folder") => app.ask_folder = true,   // 3.5.5: the first-install question (Linux)
+            Some("folder") => app.ask_folder = true,   // 3.5.5: the first-install question (3.6.0: Windows too)
+            Some("games") => app.menu_open = true,     // 3.6.0: the game menu
+            Some("uninstall") => app.confirm_uninstall = true,
             Some("login") => app.page = Page::Login,
             Some("signup") => app.page = Page::Signup,
             Some("chat") => app.chat_wait = Some(Instant::now() + Duration::from_secs(15)),   // 3.4: as soon as FloppaChat is closed (3.2: at once)
@@ -837,6 +851,10 @@ impl App {
         self.acc_token = tok;
         self.acc_name.clear();
         if self.acc_id.is_empty() || self.acc_token.is_empty() { return; }
+        // 3.6.0: the name from last time shows at once (it showed "👤 ..." until the server answered, and for good
+        // when that answer never came); the server's answer replaces it
+        if self.cfg.get_str("account", "name_id", "") == self.acc_id { self.acc_name = self.cfg.get_str("account", "name", ""); }
+        self.me_at = Some(Instant::now());
         self.call("me", "GET", "/v1/me", None);
     }
 
@@ -885,7 +903,14 @@ impl App {
     fn on_api(&mut self, kind: &str, code: u16, d: Value) {
         match kind {
             "me" => {
-                if code == 200 { self.acc_name = d["name"].as_str().unwrap_or("").into(); }
+                if code == 200 {
+                    self.acc_name = d["name"].as_str().unwrap_or("").into();
+                    if !self.acc_name.is_empty() {
+                        self.cfg.set_str("account", "name", &self.acc_name);
+                        self.cfg.set_str("account", "name_id", &self.acc_id);
+                        self.cfg.save();
+                    }
+                }
                 else if code == 401 { self.save_game_login("", ""); } // that login was logged out somewhere else
             }
             "login" | "signup" => {
@@ -947,24 +972,14 @@ impl App {
                     self.status = format!("Downloading {}: {} / {} · {:.1} MB/s{}", vname_for(&self.cur, self.manifest["game"].as_str().unwrap_or("")), mb(got), mb(total), self.speed / 1048576.0, left);
                 }
                 Msg::FolderPicked(r) => {
-                    let first = std::mem::take(&mut self.install_after_pick);   // came from the first-install question
                     match r {
-                        None => {
-                            self.status = "No folder dialog on this PC (zenity or kdialog). Use the default, or start the launcher once with --install-dir=/your/folder.".into();
-                            self.ask_folder = first;
-                        }
-                        Some(None) => self.ask_folder = first,   // cancelled: the question again
-                        Some(Some(dir)) => {
-                            self.set_install_folder(Some(dir.clone()));
-                            let ok = self.cfg.get_str("launcher", "install_dir", "") == dir.to_string_lossy();
-                            if first && ok {
-                                self.cfg.set_bool("launcher", "install_asked", true);
-                                self.cfg.save();
-                                if !self.manifest.is_null() { self.start_download(); }
-                            } else if first {
-                                self.ask_folder = true;   // that folder didn't work (the status line says why)
-                            }
-                        }
+                        None => self.status = "No folder dialog on this PC (zenity or kdialog). Use the default, or start the launcher once with --install-dir=/your/folder.".into(),
+                        Some(None) => {}   // cancelled
+                        Some(Some(dir)) if self.ask_folder => match check_install_dir(&dir) {   // first start: remembered until "Install"
+                            Ok(()) => { self.setup_dir = Some(dir); self.setup_msg.clear(); }
+                            Err(e) => self.setup_msg = e,
+                        },
+                        Some(Some(dir)) => self.set_install_folder(Some(dir)),
                     }
                 }
                 Msg::Installed { id, result } => {
@@ -999,6 +1014,9 @@ impl App {
                     let k = game(&id).id;
                     self.bg.insert(k, self.ctx.load_texture(k, img, egui::TextureOptions::LINEAR));
                 }
+                Msg::Online(v) => {
+                    self.online = v["games"].as_object().map(|o| o.iter().filter_map(|(k, n)| Some((k.clone(), n.as_u64()?))).collect()).unwrap_or_default();
+                }
                 Msg::ChatAsk => self.chat_wait = Some(Instant::now() + Duration::from_secs(15)),
                 Msg::Tick => {
                     // 3.4: FloppaChat asked for its update and is closing: once it is gone, update and open it
@@ -1027,6 +1045,19 @@ impl App {
             }
         }
         if let Some(t) = self.quit_at { if Instant::now() >= t { std::process::exit(0); } }
+        // 3.6.0: no name yet (no internet at the start, a server hiccup): ask again every 30 s
+        if !self.acc_id.is_empty() && self.acc_name.is_empty() && self.me_at.map(|t| t.elapsed() >= Duration::from_secs(30)).unwrap_or(true) {
+            self.me_at = Some(Instant::now());
+            self.call("me", "GET", "/v1/me", None);
+        }
+        // 3.6.0: players in-game, once a minute while the window shows (one small cached request, nothing in the tray)
+        if !self.hidden && self.online_at.map(|t| t.elapsed() >= Duration::from_secs(60)).unwrap_or(true) {
+            self.online_at = Some(Instant::now());
+            let (tx, ctx, url) = (self.tx.clone(), self.ctx.clone(), format!("{}/v1/online", api_url()));
+            std::thread::spawn(move || {
+                if let Some(v) = get_json(&url) { let _ = tx.send(Msg::Online(v)); ctx.request_repaint(); }
+            });
+        }
     }
 
     // ------------------------------------------------------------ text for the buttons
@@ -1164,37 +1195,35 @@ impl App {
         mesh.add_triangle(0, 2, 3);
         p.add(egui::Shape::mesh(mesh));
 
-        // top bar
+        // top bar (3.6.0, Kian): the game's title with its menu arrow and the players in-game on the left; on the right
+        // Patch notes, Website, FloppaChat, the account (the whole name) and the settings. No tag line any more: the
+        // edition is in the settings and at the bottom.
         let g = game(&self.cur);
-        outlined(&p, Pos2::new(32.0, 20.0), g.title, 38.0, GOLD, 2.5);
-        let tw = p.layout_no_wrap(g.title.into(), font(38.0), GOLD).size().x;
-        let tag = format!("{}  ·  {} EDITION", g.tag, edition().to_uppercase());
-        let tag_w = p.layout_no_wrap(tag.clone(), font(14.0), Color32::WHITE).size().x;
-        let mut x = 1068.0;
-        let gear = Rect::from_min_size(Pos2::new(x - 46.0, 27.0), Vec2::new(46.0, 40.0));
-        if button(ui, gear, "⚙", 20.0, Look::Dark, true).clicked() { self.settings_open = !self.settings_open; }
-        x -= 46.0 + 18.0;
+        let shown = shown_games(self.cfg.get_bool("launcher", "hide_in_work", true));
+        let has_menu = shown.len() > 1;   // one game showing: no arrow, no menu
+        let gear = Rect::from_min_size(Pos2::new(1068.0 - 46.0, 27.0), Vec2::new(46.0, 40.0));
+        if button(ui, gear, "⚙", 20.0, Look::Dark, true).clicked() { self.settings_open = !self.settings_open; self.menu_open = false; }
         let acc_text = if !self.acc_name.is_empty() { format!("👤 {}", self.acc_name) } else if !self.acc_id.is_empty() { "👤 ...".into() } else { "Log in".into() };
-        // 3.2: FloppaChat sits here, next to the settings, and never in the game switcher (it's an app, not a game)
-        let mut links: Vec<(String, u8)> = vec![(self.chat_label(), 3), ("Website".into(), 0), (acc_text, 1), ("Patch notes".into(), 2)];
-        for (text, kind) in links.drain(..) {
-            let w = p.layout_no_wrap(text.clone(), font(17.0), Color32::WHITE).size().x + 28.0;
-            let r = Rect::from_min_size(Pos2::new(x - w, 29.0), Vec2::new(w, 36.0));
-            // 3.4.1: FloppaChat's button: its icon left of the text (room for it made with spaces, the text stays centred)
-            let shown = if kind == 3 { format!("        {text}") } else { text.clone() };
-            let (w, r) = if kind == 3 { let w = p.layout_no_wrap(shown.clone(), font(17.0), Color32::WHITE).size().x + 28.0; (w, Rect::from_min_size(Pos2::new(x - w, 29.0), Vec2::new(w, 36.0))) } else { (w, r) };
-            let resp = button(ui, r, &shown, 17.0, Look::Dark, true);
-            if kind == 3 {
+        // 3.4.1: FloppaChat's button has its icon left of the text (room made with spaces, the text stays centred)
+        let row: [(String, u8); 4] = [("Patch notes".into(), 2), ("Website".into(), 0), (format!("        {}", self.chat_label()), 3), (acc_text, 1)];
+        let gap = 12.0;
+        let widths: Vec<f32> = row.iter().map(|(t, _)| p.layout_no_wrap(t.clone(), font(17.0), Color32::WHITE).size().x + 28.0).collect();
+        let right_start = gear.min.x - gap - widths.iter().sum::<f32>() - gap * (row.len() as f32 - 1.0);
+        let mut x = right_start;
+        for ((text, kind), w) in row.iter().zip(widths) {
+            let r = Rect::from_min_size(Pos2::new(x, 29.0), Vec2::new(w, 36.0));
+            x += w + gap;
+            let resp = button(ui, r, text, 17.0, Look::Dark, true);
+            if *kind == 3 {
                 let tex = self.chat_icon.get_or_insert_with(|| {
                     let img = image::load_from_memory(include_bytes!("../assets/chat.png")).expect("chat icon").to_rgba8();
                     let size = [img.width() as usize, img.height() as usize];
                     ui.ctx().load_texture("chat-icon", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR)
                 }).clone();
-                let tw = p.layout_no_wrap(shown.clone(), font(17.0), Color32::WHITE).size().x;
-                let left = r.center().x - tw / 2.0;
+                let left = r.center().x - (w - 28.0) / 2.0;
                 p.image(tex.id(), Rect::from_center_size(Pos2::new(left + 10.0, r.center().y), Vec2::splat(20.0)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
             }
-            let resp = if kind == 3 {
+            let resp = if *kind == 3 {
                 let tip = if !self.chat_err.is_empty() { self.chat_err.clone() } else if self.chat_installed.is_empty() {
                     format!("The chat of the Floppa games: servers, direct messages and voice calls with your Floppa account.\nClick to install it ({}).", if self.chat["size"].as_u64().unwrap_or(0) > 0 { mb(self.chat["size"].as_u64().unwrap_or(0)) } else { "a few MB".into() })
                 } else if self.chat_update() {
@@ -1210,12 +1239,35 @@ impl App {
                     _ => open_url(g.notes),
                 }
             }
-            x -= w + 18.0;
         }
-        // 3.3.1: the tag line next to the title only while it fits before the buttons (the FloppaChat button made the
-        // row longer: they overlapped); otherwise under the title
-        let tag_pos = if 32.0 + tw + 18.0 + tag_w <= x { Pos2::new(32.0 + tw + 18.0, 38.0) } else { Pos2::new(34.0, 66.0) };
-        p.text(tag_pos, Align2::LEFT_TOP, tag, font(14.0), Color32::from_white_alpha(178));
+        // left: the title (with the menu arrow when there is more than one game), then the players in-game
+        outlined(&p, Pos2::new(32.0, 20.0), g.title, 38.0, GOLD, 2.5);
+        let tw = p.layout_no_wrap(g.title.into(), font(38.0), GOLD).size().x;
+        let mut lx = 32.0 + tw + 12.0;
+        let mut menu_hit = Rect::NOTHING;
+        if has_menu {
+            let arrow = Rect::from_center_size(Pos2::new(lx + 17.0, 45.0), Vec2::splat(34.0));
+            menu_hit = Rect::from_min_max(Pos2::new(26.0, 20.0), arrow.max);
+            let resp = ui.allocate_rect(menu_hit, if self.busy { Sense::hover() } else { Sense::click() });
+            let hot = resp.hovered() || self.menu_open;
+            p.circle(arrow.center(), 16.0, if hot { Color32::from_rgba_unmultiplied(255, 209, 102, 40) } else { Color32::from_black_alpha(60) }, Stroke::new(1.5_f32, if hot { GOLD } else { Color32::from_rgba_unmultiplied(255, 209, 102, 150) }));
+            let (c, d) = (arrow.center(), if self.menu_open { -1.0 } else { 1.0 });
+            let st = Stroke::new(2.2_f32, GOLD);
+            p.line_segment([c + Vec2::new(-6.0, -3.0 * d), c + Vec2::new(0.0, 3.0 * d)], st);
+            p.line_segment([c + Vec2::new(0.0, 3.0 * d), c + Vec2::new(6.0, -3.0 * d)], st);
+            if resp.hovered() && !self.busy { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+            let resp = if self.busy { resp.on_hover_text("Wait until the download is done to switch games") } else { resp.on_hover_text("Switch game") };
+            if resp.clicked() { self.menu_open = !self.menu_open; self.settings_open = false; }
+            lx = arrow.max.x + 14.0;
+        }
+        if let Some(n) = self.online.get(g.id).copied() {
+            let text = format!("{n} {} in-game", if n == 1 { "player" } else { "players" });
+            let w = p.layout_no_wrap(text.clone(), font(16.0), Color32::WHITE).size().x + 16.0;
+            // next to the title while it fits before the buttons, else under it
+            let at = if lx + w <= right_start - 12.0 { Pos2::new(lx, 45.0) } else { Pos2::new(34.0, 74.0) };
+            p.circle_filled(at + Vec2::new(5.0, 0.0), 4.5, if n > 0 { Color32::from_rgb(0x4c, 0xd9, 0x64) } else { Color32::from_white_alpha(90) });
+            p.text(at + Vec2::new(16.0, 0.0), Align2::LEFT_CENTER, text, font(16.0), Color32::from_white_alpha(215));
+        }
 
         // 3.5: a new launcher is downloaded: one click restarts into it (closing the launcher also installs it)
         let lv = self.mstore.get("mining").and_then(|m| m.get("launcher")).and_then(|v| v.as_str()).unwrap_or("0").to_string();
@@ -1231,17 +1283,6 @@ impl App {
         else if newer(&lv, LAUNCHER_VERSION) && !self.self_updating {
             let r = Rect::from_min_size(Pos2::new(32.0, 84.0), Vec2::new(1036.0, 36.0));
             if button(ui, r, "A new launcher is out: click to download it", 15.0, Look::Dark, true).clicked() { open_url(&format!("{}/download/", site())); }
-        }
-
-        // game switcher
-        // 3.1.6: only the games that show (Settings: "Hide in-work games"); one game alone needs no switcher
-        let shown = shown_games(self.cfg.get_bool("launcher", "hide_in_work", true));
-        for (i, gg) in shown.iter().enumerate().filter(|_| shown.len() > 1) {
-            let r = Rect::from_min_size(Pos2::new(32.0 + i as f32 * 200.0, 130.0), Vec2::new(190.0, 44.0));
-            let on = gg.id == self.cur;
-            if button(ui, r, gg.title, 18.0, if on { Look::Gold } else { Look::Dark }, !self.busy || on).clicked() && !on {
-                self.switch_game(gg.id);
-            }
         }
 
         // news
@@ -1309,44 +1350,159 @@ impl App {
             }
         }
 
+        if self.menu_open && has_menu { self.draw_game_menu(ui, menu_hit, &shown); } else { self.menu_open = false; }
         if self.settings_open { self.draw_settings(ui, gear); }
+        if self.confirm_uninstall { self.draw_confirm_uninstall(ui); }
         if self.page != Page::None { self.draw_account(ui); }
         if self.ask_folder && self.page == Page::None { self.draw_folder_ask(ui); }
     }
 
-    /// 3.5.5: Linux, nothing installed yet, no folder picked and never asked before.
+    /// 3.6.0 (Kian 2026-11-28): the game menu under the title, like floppaland.com's: the games that show, finished
+    /// ones first, the current one marked. A click switches; a click outside closes it.
+    fn draw_game_menu(&mut self, ui: &mut egui::Ui, anchor: Rect, shown: &[&'static Game]) {
+        let p = ui.painter().clone();
+        let free: Vec<&Game> = shown.iter().copied().filter(|g| !g.in_work).collect();
+        let work: Vec<&Game> = shown.iter().copied().filter(|g| g.in_work).collect();
+        let row_h = 64.0;
+        let heads = [!free.is_empty(), !work.is_empty()].iter().filter(|x| **x).count() as f32;
+        let h = 12.0 + heads * 30.0 + shown.len() as f32 * row_h + 8.0;
+        let panel = Rect::from_min_size(Pos2::new(24.0, anchor.max.y + 10.0), Vec2::new(420.0, h));
+        let outside = ui.ctx().input(|i| i.pointer.any_click() && i.pointer.interact_pos().map(|q| !panel.contains(q) && !anchor.contains(q)).unwrap_or(false));
+        let _block = ui.allocate_rect(panel, Sense::click());   // nothing under the menu gets the click
+        p.rect(panel, CornerRadius::same(16), Color32::from_rgb(7, 9, 14), Stroke::new(1.0_f32, Color32::from_white_alpha(36)), StrokeKind::Inside);
+        let mut y = panel.min.y + 10.0;
+        let mut pick = None;
+        for (head, list) in [("FREE TO PLAY", &free), ("PUBLIC TESTS AND BETAS", &work)] {
+            if list.is_empty() { continue; }
+            if y > panel.min.y + 12.0 { p.hline(panel.min.x + 12.0..=panel.max.x - 12.0, y, Stroke::new(1.0_f32, Color32::from_white_alpha(26))); }
+            p.text(Pos2::new(panel.min.x + 20.0, y + 16.0), Align2::LEFT_CENTER, head, font(13.0), Color32::from_white_alpha(150));
+            y += 30.0;
+            for gg in list.iter() {
+                let r = Rect::from_min_size(Pos2::new(panel.min.x + 8.0, y), Vec2::new(panel.width() - 16.0, row_h - 4.0));
+                let on = gg.id == self.cur;
+                let can = on || !self.busy;
+                let resp = ui.allocate_rect(r, if can { Sense::click() } else { Sense::hover() });
+                if on {
+                    p.rect_filled(r, CornerRadius::same(12), Color32::from_rgba_unmultiplied(40, 34, 18, 235));
+                    p.rect_filled(Rect::from_min_size(r.min, Vec2::new(4.0, r.height())), CornerRadius { nw: 12, sw: 12, ne: 0, se: 0 }, GOLD);
+                } else if resp.hovered() && can {
+                    p.rect_filled(r, CornerRadius::same(12), Color32::from_white_alpha(12));
+                }
+                let [cr, cg, cb] = gg.color;
+                let col = if can { Color32::from_rgb(cr, cg, cb) } else { Color32::from_rgba_unmultiplied(cr, cg, cb, 110) };
+                p.text(Pos2::new(r.min.x + 16.0, r.min.y + 6.0), Align2::LEFT_TOP, gg.title, font(24.0), col);
+                let mut sub = format!("{} · {}", gg.kind, gg.tag.to_lowercase());
+                if let Some(n) = self.online.get(gg.id).filter(|n| **n > 0) { sub.push_str(&format!(" · {n} in-game")); }
+                let sub_g = p.text(Pos2::new(r.min.x + 16.0, r.min.y + 38.0), Align2::LEFT_TOP, &sub, font(13.0), Color32::from_white_alpha(170));
+                if on { p.text(Pos2::new(sub_g.max.x, r.min.y + 38.0), Align2::LEFT_TOP, " · you're here", font(13.0), GOLD); }
+                p.text(Pos2::new(r.max.x - 18.0, r.center().y), Align2::RIGHT_CENTER, gg.icon, font(22.0), Color32::from_white_alpha(200));
+                if resp.hovered() && can && !on { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                if resp.clicked() && !on { pick = Some(gg.id); }
+                y += row_h;
+            }
+        }
+        if let Some(id) = pick { self.switch_game(id); self.menu_open = false; }
+        if outside { self.menu_open = false; }
+    }
+
+    /// 3.6.0: "Uninstall the game" asks first.
+    fn draw_confirm_uninstall(&mut self, ui: &mut egui::Ui) {
+        let full = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 640.0));
+        let p = ui.painter().clone();
+        let _block = ui.allocate_rect(full, Sense::click());
+        p.rect_filled(full, CornerRadius::ZERO, Color32::from_black_alpha(178));
+        let panel = Rect::from_center_size(full.center(), Vec2::new(520.0, 230.0));
+        p.rect(panel, CornerRadius::same(14), Color32::from_rgb(16, 16, 21), Stroke::new(1.0_f32, Color32::from_white_alpha(40)), StrokeKind::Inside);
+        let x = panel.min.x + 28.0;
+        let g = game(&self.cur);
+        p.text(Pos2::new(x, panel.min.y + 24.0), Align2::LEFT_TOP, format!("Uninstall {}?", g.title), font(24.0), Color32::WHITE);
+        wrapped(&p, Pos2::new(x, panel.min.y + 64.0), &format!("This deletes the game's files from this PC ({}). Your progress stays on your Floppa account, so you can install it again any time and play on.", short_path(&game_dir(&self.cur))), 15.0, Color32::from_white_alpha(190), 464.0);
+        let b1 = Rect::from_min_size(Pos2::new(x, panel.max.y - 66.0), Vec2::new(226.0, 44.0));
+        let b2 = Rect::from_min_size(Pos2::new(x + 238.0, panel.max.y - 66.0), Vec2::new(226.0, 44.0));
+        if button(ui, b1, "Cancel", 18.0, Look::Dark, true).clicked() || ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.confirm_uninstall = false;
+        }
+        let can = !self.busy && !self.game_running;
+        if button(ui, b2, "Uninstall", 18.0, Look::Gold, can).clicked() {
+            self.confirm_uninstall = false;
+            let _ = std::fs::remove_dir_all(game_dir(&self.cur));
+            self.installed.clear();
+            self.status = format!("{} was uninstalled. Click INSTALL to get it again.", g.title);
+        }
+    }
+
+    /// The first start (3.5.5 Linux; 3.6.0 Windows too): nothing installed, never asked. Nothing is downloaded before
+    /// the answer.
     fn needs_folder_ask(&self) -> bool {
-        IS_LINUX && self.shot.is_none() && !self.cfg.get_bool("launcher", "install_asked", false)
+        self.shot.is_none() && !self.cfg.get_bool("launcher", "install_asked", false)
             && self.cfg.get_str("launcher", "install_dir", "").is_empty() && !any_game_installed()
     }
 
-    /// The question before the first install on Linux: pick a folder, or take the default. Asked once.
+    /// The first-start window: where the games go, and (3.6.0, Kian) "Install FloppaChat" and the shortcuts, all
+    /// checked by default. Only "Install" does anything; the choices can be changed later in the settings.
     fn draw_folder_ask(&mut self, ui: &mut egui::Ui) {
         let full = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 640.0));
         let p = ui.painter().clone();
         let _block = ui.allocate_rect(full, Sense::click()); // nothing behind the window can be clicked
         p.rect_filled(full, CornerRadius::ZERO, Color32::from_black_alpha(178));
-        let panel = Rect::from_center_size(full.center(), Vec2::new(560.0, 270.0));
+        let panel = Rect::from_center_size(full.center(), Vec2::new(600.0, 396.0));
         p.rect(panel, CornerRadius::same(14), Color32::from_rgb(16, 16, 21), Stroke::new(1.0_f32, Color32::from_white_alpha(40)), StrokeKind::Inside);
         let x = panel.min.x + 28.0;
-        p.text(Pos2::new(x, panel.min.y + 24.0), Align2::LEFT_TOP, "Where should the games be installed?", font(24.0), Color32::WHITE);
-        p.text(Pos2::new(x, panel.min.y + 64.0), Align2::LEFT_TOP, "Pick your own folder (for example on another drive), or use the default.", font(15.0), Color32::from_white_alpha(190));
-        p.text(Pos2::new(x, panel.min.y + 86.0), Align2::LEFT_TOP, format!("Default: {}", short_path(&data_dir())), font(15.0), Color32::from_white_alpha(140));
-        p.text(Pos2::new(x, panel.min.y + 108.0), Align2::LEFT_TOP, "You can change it later in the settings (gear).", font(15.0), Color32::from_white_alpha(140));
-        let b1 = Rect::from_min_size(Pos2::new(x, panel.min.y + 150.0), Vec2::new(504.0, 46.0));
-        let b2 = Rect::from_min_size(Pos2::new(x, panel.min.y + 204.0), Vec2::new(504.0, 42.0));
-        if button(ui, b1, "Choose a folder...", 19.0, Look::Gold, true).clicked() {
-            self.ask_folder = false;
-            self.install_after_pick = true;
+        let g = game(&self.cur);
+        p.text(Pos2::new(x, panel.min.y + 22.0), Align2::LEFT_TOP, format!("Install {}", g.title), font(26.0), Color32::WHITE);
+        p.text(Pos2::new(x, panel.min.y + 64.0), Align2::LEFT_TOP, "Install folder", font(14.0), Color32::from_white_alpha(150));
+        let dir = match &self.setup_dir { Some(d) => d.join(INSTALL_SUB), None => data_dir() };
+        let fr = Rect::from_min_size(Pos2::new(x, panel.min.y + 84.0), Vec2::new(410.0, 38.0));
+        p.rect(fr, CornerRadius::same(8), Color32::from_rgb(10, 10, 13), Stroke::new(1.0_f32, Color32::from_white_alpha(40)), StrokeKind::Inside);
+        p.text(Pos2::new(fr.min.x + 12.0, fr.center().y), Align2::LEFT_CENTER, short_path(&dir), font(15.0), Color32::WHITE);
+        let ch = Rect::from_min_size(Pos2::new(fr.max.x + 10.0, fr.min.y), Vec2::new(panel.max.x - 28.0 - fr.max.x - 10.0, 38.0));
+        if button(ui, ch, "Change...", 16.0, Look::Dark, true).clicked() {
             let (tx, ctx, start) = (self.tx.clone(), self.ctx.clone(), home());
             self.status = "Pick a folder in the window that opened.".into();
             std::thread::spawn(move || { let _ = tx.send(Msg::FolderPicked(pick_folder(&start))); ctx.request_repaint(); });
         }
-        if button(ui, b2, "Use the default folder", 17.0, Look::Dark, true).clicked() {
+        if !self.setup_msg.is_empty() {
+            p.text(Pos2::new(x, fr.max.y + 6.0), Align2::LEFT_TOP, &self.setup_msg, font(13.0), Color32::from_rgb(255, 120, 110));
+        } else if self.setup_dir.is_some() {
+            let r = p.text(Pos2::new(x, fr.max.y + 6.0), Align2::LEFT_TOP, "Use the default folder", font(13.0), GOLD);
+            if ui.allocate_rect(r.expand(3.0), Sense::click()).clicked() { self.setup_dir = None; }
+        }
+        let chat_mb = { let n = self.chat["size"].as_u64().unwrap_or(0); if n > 0 { format!(" ({})", mb(n)) } else { String::new() } };
+        let checks: [(String, u8); 3] = [
+            (format!("Install FloppaChat{chat_mb}: the chat of the Floppa games"), 0),
+            ("Desktop shortcut".into(), 1),
+            (if IS_LINUX { "App menu shortcut".into() } else { "Start menu shortcut".into() }, 2),
+        ];
+        let mut y = panel.min.y + 154.0;
+        for (label, k) in checks {
+            let r = Rect::from_min_size(Pos2::new(x - 6.0, y), Vec2::new(panel.width() - 44.0, 32.0));
+            let resp = ui.allocate_rect(r, Sense::click());
+            if resp.hovered() { p.rect_filled(r, CornerRadius::same(6), Color32::from_white_alpha(14)); }
+            let on = match k { 0 => self.setup_chat, 1 => self.setup_desk, _ => self.setup_menu };
+            let bx = Rect::from_min_size(Pos2::new(r.min.x + 8.0, r.center().y - 9.0), Vec2::splat(18.0));
+            p.rect(bx, CornerRadius::same(4), if on { GOLD } else { Color32::TRANSPARENT }, Stroke::new(1.5_f32, if on { GOLD } else { Color32::from_white_alpha(120) }), StrokeKind::Inside);
+            if on { p.text(bx.center(), Align2::CENTER_CENTER, "✔", font(13.0), INK); }
+            p.text(Pos2::new(r.min.x + 36.0, r.center().y), Align2::LEFT_CENTER, label, font(16.0), Color32::WHITE);
+            if resp.clicked() { match k { 0 => self.setup_chat = !on, 1 => self.setup_desk = !on, _ => self.setup_menu = !on } }
+            y += 36.0;
+        }
+        p.text(Pos2::new(x, y + 6.0), Align2::LEFT_TOP, "You can change all of this later in the settings (gear).", font(14.0), Color32::from_white_alpha(130));
+        let size = self.manifest["size"].as_u64().unwrap_or(0);
+        let label = if size > 0 { format!("Install ({})", mb(size)) } else { "Install".into() };
+        let b = Rect::from_min_size(Pos2::new(x, panel.max.y - 70.0), Vec2::new(panel.width() - 56.0, 48.0));
+        if button(ui, b, &label, 20.0, Look::Gold, !self.manifest.is_null()).clicked() {
+            if let Some(d) = self.setup_dir.clone() {
+                self.set_install_folder(Some(d.clone()));
+                if self.cfg.get_str("launcher", "install_dir", "") != d.to_string_lossy() { return; }   // didn't work: the status line says why
+            }
             self.ask_folder = false;
             self.cfg.set_bool("launcher", "install_asked", true);
             self.cfg.save();
-            if !self.manifest.is_null() { self.start_download(); }
+            for (key, on) in [("desktop", self.setup_desk), ("startmenu", self.setup_menu)] {
+                if on { let _ = make_shortcut(key); }
+            }
+            if self.setup_chat && self.chat_installed.is_empty() && !self.chat.is_null() && !self.chat_busy { self.chat_install(false); }
+            self.start_download();
         }
     }
 
@@ -1377,23 +1533,27 @@ impl App {
 
     fn draw_settings(&mut self, ui: &mut egui::Ui, gear: Rect) {
         let lin = IS_LINUX;
-        let toggles: [(&str, &str, &str, bool); 7] = [
+        let toggles: [(&str, &str, &str, bool); 5] = [
             ("launcher", "hide_in_work", "Hide in-work games (public tests and betas)", true),
             ("launcher", "quit_on_play", "Quit the launcher when the game starts (off: it waits in the tray)", false),
             ("win", "notify", if lin { "Notifications for new updates" } else { "Windows notifications for new updates" }, false),
-            ("win", "desktop", "Desktop shortcut", true),
-            ("win", "startmenu", if lin { "App menu shortcut" } else { "Start menu shortcut" }, true),
             ("win", "autostart", if lin { "Start with the PC (in the tray)" } else { "Start with Windows (in the tray)" }, false),
             ("win", "tray_on_close", "Closing the window keeps it in the tray", false),
         ];
-        // 3.5.4 (Linux): where the games are installed, and back to the default when a folder was picked
+        // 3.6.0 (Kian): shortcuts are buttons, not checkmarks: a checkmark would remake a deleted shortcut by itself.
+        // Each row says what a click does now: create it, or remove the one that is there.
+        let menu_name = if lin { "app menu" } else { "Start menu" };
+        let (has_desk, has_menu) = (shortcut_exists("desktop"), shortcut_exists("startmenu"));
+        let desk_label = if has_desk { "Remove the desktop shortcut".to_string() } else { "Create a desktop shortcut".to_string() };
+        let menu_label = if has_menu { format!("Remove the {menu_name} shortcut") } else { format!("Create {} {menu_name} shortcut", if lin { "an" } else { "a" }) };
         let custom = !self.cfg.get_str("launcher", "install_dir", "").is_empty();
         let folder_label = format!("Install folder: {} (click to change)", short_path(&install_base()));
-        let mut actions: Vec<&str> = vec!["Check for updates", "Open the game folder", "Repair (download the game again)", "Uninstall the game"];
-        if lin { actions.push(&folder_label); }
-        if lin && custom { actions.push("Install folder: back to the default"); }
-        let w = 520.0;
-        let h = 16.0 + toggles.len() as f32 * 32.0 + 12.0 + actions.len() as f32 * 32.0 + 12.0 + 30.0;
+        // (id, label): ids stay the same whatever is in the list
+        let mut actions: Vec<(u8, String)> = vec![(0, "Check for updates".into()), (1, "Open the game folder".into()),
+            (2, "Repair (download the game again)".into()), (3, "Uninstall the game...".into()), (6, desk_label), (7, menu_label), (4, folder_label)];
+        if custom { actions.push((5, "Install folder: back to the default".into())); }
+        let w = 540.0;
+        let h = 16.0 + toggles.len() as f32 * 32.0 + 12.0 + actions.len() as f32 * 32.0 + 12.0 + 36.0;
         let panel = Rect::from_min_size(Pos2::new(gear.max.x - w, gear.max.y + 6.0), Vec2::new(w, h));
         let p = ui.painter().clone();
         // click outside closes it
@@ -1412,7 +1572,7 @@ impl App {
             if resp.clicked() {
                 self.cfg.set_bool(sec, key, !on);
                 self.cfg.save();
-                if sec == "win" && key != "notify" { apply_system(&self.cfg); }
+                if key == "autostart" { set_autostart(!on); }
                 // turned on while an in-work game is open: back to the first game that still shows
                 if key == "hide_in_work" && !on && !self.busy && !shown_games(true).iter().any(|g| g.id == self.cur) { self.switch_game("mining"); }
                 if key == "notify" && !on { toast(APP_NAME, "Notifications are on. You'll get one when a new Floppa Mining update is out."); }
@@ -1421,34 +1581,50 @@ impl App {
         }
         p.hline(panel.min.x + 10.0..=panel.max.x - 10.0, y + 5.0, Stroke::new(1.0_f32, Color32::from_white_alpha(30)));
         y += 12.0;
-        for (i, label) in actions.clone().into_iter().enumerate() {
+        for (id, label) in actions.iter() {
             let r = Rect::from_min_size(Pos2::new(panel.min.x + 6.0, y), Vec2::new(w - 12.0, 30.0));
-            let enabled = !(i >= 2 && self.busy);
+            let enabled = !(matches!(id, 2..=5) && self.busy);
             let resp = ui.allocate_rect(r, if enabled { Sense::click() } else { Sense::hover() });
             if resp.hovered() && enabled { p.rect_filled(r, CornerRadius::same(6), Color32::from_white_alpha(14)); }
             p.text(Pos2::new(r.min.x + 12.0, r.center().y), Align2::LEFT_CENTER, label, font(15.0), if enabled { Color32::WHITE } else { Color32::from_white_alpha(90) });
             if resp.clicked() {
-                self.settings_open = false;
-                match i {
-                    0 => self.check_now(),
-                    1 => open_folder(&game_dir(&self.cur)),
-                    2 => if !self.manifest.is_null() { self.start_download(); },
-                    3 => {
-                        let _ = std::fs::remove_dir_all(game_dir(&self.cur));
-                        self.installed.clear();
-                    }
+                match id {
+                    0 => { self.settings_open = false; self.check_now(); }
+                    1 => { self.settings_open = false; open_folder(&game_dir(&self.cur)); }
+                    2 => { self.settings_open = false; if !self.manifest.is_null() { self.start_download(); } }
+                    3 => { self.settings_open = false; self.confirm_uninstall = true; }
                     4 => {
+                        self.settings_open = false;
                         let (tx, ctx, start) = (self.tx.clone(), self.ctx.clone(), home());
                         self.status = "Pick a folder in the window that opened.".into();
                         std::thread::spawn(move || { let _ = tx.send(Msg::FolderPicked(pick_folder(&start))); ctx.request_repaint(); });
                     }
-                    _ => self.set_install_folder(None),
+                    5 => { self.settings_open = false; self.set_install_folder(None); }
+                    6 | 7 => {   // the menu stays open: the row changes to Create / Remove at once
+                        let key = if *id == 6 { "desktop" } else { "startmenu" };
+                        if shortcut_exists(key) { remove_shortcut(key); }
+                        else if let Err(e) = make_shortcut(key) { self.status = format!("The shortcut couldn't be made ({e})."); }
+                    }
+                    _ => {}
                 }
             }
             y += 32.0;
         }
         p.hline(panel.min.x + 10.0..=panel.max.x - 10.0, y + 5.0, Stroke::new(1.0_f32, Color32::from_white_alpha(30)));
+        // 3.6.0 (Kian): the launcher's size next to its version: the official numbers of this version from latest.json
+        // (download = the zip, unzipped = the program itself); before latest.json is in, the program file's own size
+        let m = self.mstore.get("mining").and_then(Self::for_platform).unwrap_or(Value::Null);
+        let same = m["launcher"].as_str() == Some(LAUNCHER_VERSION);
+        let zip = m["launcher_size"].as_u64().filter(|_| same);
+        let unz = m["launcher_unzipped"].as_u64().filter(|_| same)
+            .or_else(|| std::env::current_exe().ok().and_then(|e| std::fs::metadata(e).ok()).map(|md| md.len()));
+        let sizes = match (zip, unz) {
+            (Some(z), Some(u)) => format!("{:.1} MB download · {:.1} MB unzipped", z as f64 / 1048576.0, u as f64 / 1048576.0),
+            (None, Some(u)) => format!("{:.1} MB unzipped", u as f64 / 1048576.0),
+            _ => String::new(),
+        };
         p.text(Pos2::new(panel.min.x + 18.0, y + 22.0), Align2::LEFT_CENTER, format!("Launcher {LAUNCHER_VERSION} · {} edition", edition()), font(14.0), Color32::from_white_alpha(110));
+        p.text(Pos2::new(panel.max.x - 18.0, y + 22.0), Align2::RIGHT_CENTER, sizes, font(14.0), Color32::from_white_alpha(110));
         if outside { self.settings_open = false; }
     }
 

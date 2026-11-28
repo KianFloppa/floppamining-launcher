@@ -181,3 +181,31 @@ was picked and the question was never answered (`[launcher] install_asked`), a w
 or **Use the default folder**. Nothing is downloaded before the answer. Cancelling the folder dialog or picking a folder
 that can't be written brings the question back. Players who already have a game installed are not asked.
 Picture mode: `--open=folder --shot=/tmp/x.png`. Code: `needs_folder_ask`, `draw_folder_ask` in `main.rs`.
+
+## Launcher 3.6.0 (2026-11-28, Kian): cleaner top bar, game menu, first-start window on Windows, shortcuts on request
+- **Top bar:** the game's title, then (more than one game showing) a round arrow that opens the **game menu**, then
+  **"N players in-game"** (api `/v1/online`: `games.mining`, `games.felony`, `games.mystery`; once a minute while the
+  window shows, nothing in the tray; Bedwars doesn't report players yet, so it shows none). Right side, left to right:
+  Patch notes, Website, FloppaChat, the account (the whole name), the settings. The "FREE TO PLAY · WINDOWS EDITION"
+  line is gone (the edition is in the settings and at the bottom).
+- **Game menu** (like floppaland.com's): under the title, "Free to play" first, then "Public tests and betas"; each game
+  in its colour with "kind · stage" (`Game.kind`, `Game.tag`), players in-game and "you're here". Replaces the row of
+  game buttons. With one game showing (Hide in-work games on, nothing else installed): no arrow, no menu.
+- **Account name:** the last name shows at once (`[account] name` + `name_id` in launcher.cfg); /v1/me is asked again
+  every 30 s until it answers (it showed "👤 ..." for good when the first answer never came).
+- **Shortcuts are buttons now** (Kian: "a checkmark would mean it has to create a new one if deleted automatically and that
+  would be virus like"). Until 3.5.6 the desktop and Start menu shortcuts were made again at every start while their
+  checkmark was on. Now: "Create a desktop shortcut" / "Remove the desktop shortcut" (same for the Start menu / app menu)
+  in the settings, the row shows what a click does. At every start only an existing shortcut is refreshed (the launcher
+  may have moved); a deleted one stays deleted. Code: `shortcut_path`, `make_shortcut`, `remove_shortcut`,
+  `apply_system`, `set_autostart` in core.rs.
+- **Uninstall asks first** (`draw_confirm_uninstall`; the progress stays on the account).
+- **First start, Windows too** (was Linux only since 3.5.5): nothing installed and never asked → a window with the install
+  folder (Change... opens Windows' own folder dialog, `rfd`; Linux zenity/kdialog), **Install FloppaChat (size)**, Desktop
+  shortcut and Start menu shortcut, all checked by default, and "Install (size)". Nothing happens before Install.
+  Picture mode: `--open=folder`.
+- **Settings footer:** "Launcher 3.6.0 · Windows edition" and on the right "x.x MB download · y.y MB unzipped": the
+  official numbers of this version from latest.json (`launcher_size`, `launcher_unzipped`; Linux from its `linux`
+  block); before latest.json is in, the program file's own size. floppatreasure-site `tools/set_launcher.py` fills both
+  (and url, sha256) from the zips in `builds/`, so the download page's size updates with each launcher release.
+- Picture modes: `--open=games` (game menu), `--open=uninstall`, `--open=settings`, `--open=folder`.
