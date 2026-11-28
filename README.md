@@ -209,3 +209,5 @@ Picture mode: `--open=folder --shot=/tmp/x.png`. Code: `needs_folder_ask`, `draw
   block); before latest.json is in, the program file's own size. floppatreasure-site `tools/set_launcher.py` fills both
   (and url, sha256) from the zips in `builds/`, so the download page's size updates with each launcher release.
 - Picture modes: `--open=games` (game menu), `--open=uninstall`, `--open=settings`, `--open=folder`.
+- **3.6.1** (Kian): "Hide in-work games" hides them even when installed (their files stay; turn it off to see them).
+  The game menu has no icons (emoji look different on every PC) and no "you're here" (the title above says it).

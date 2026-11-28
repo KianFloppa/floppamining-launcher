@@ -1393,9 +1393,7 @@ impl App {
                 p.text(Pos2::new(r.min.x + 16.0, r.min.y + 6.0), Align2::LEFT_TOP, gg.title, font(24.0), col);
                 let mut sub = format!("{} · {}", gg.kind, gg.tag.to_lowercase());
                 if let Some(n) = self.online.get(gg.id).filter(|n| **n > 0) { sub.push_str(&format!(" · {n} in-game")); }
-                let sub_g = p.text(Pos2::new(r.min.x + 16.0, r.min.y + 38.0), Align2::LEFT_TOP, &sub, font(13.0), Color32::from_white_alpha(170));
-                if on { p.text(Pos2::new(sub_g.max.x, r.min.y + 38.0), Align2::LEFT_TOP, " · you're here", font(13.0), GOLD); }
-                p.text(Pos2::new(r.max.x - 18.0, r.center().y), Align2::RIGHT_CENTER, gg.icon, font(22.0), Color32::from_white_alpha(200));
+                p.text(Pos2::new(r.min.x + 16.0, r.min.y + 38.0), Align2::LEFT_TOP, &sub, font(13.0), Color32::from_white_alpha(170));
                 if resp.hovered() && can && !on { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
                 if resp.clicked() && !on { pick = Some(gg.id); }
                 y += row_h;

@@ -33,35 +33,36 @@ pub struct Game {
     pub home: &'static str,    // 3.1.4: the game's own website; its main picture (the hero) is the launcher's background
     pub kind: &'static str,    // 3.6.0: the game menu's second line ("Digging game · free to play"), like floppaland.com
     pub color: [u8; 3],        // 3.6.0: its title colour in the game menu (the colours of floppaland.com's game menu)
-    pub icon: &'static str,
 }
 
 pub const GAMES: [Game; 4] = [
     Game { id: "mining", title: "Floppa Mining", tag: "FREE TO PLAY", dir: "game", manifest: "/launcher/latest.json",
         news: "/launcher/news.json", exe: "FloppaMining.exe", site: "https://floppamining.com",
         notes: "https://floppamining.com/updates/", in_work: false, home: "https://floppamining.com",
-        kind: "Digging game", color: [0xff, 0xd1, 0x66], icon: "⛏" },
+        kind: "Digging game", color: [0xff, 0xd1, 0x66] },
     Game { id: "felony", title: "Floppa Felony", tag: "PUBLIC TEST", dir: "felony", manifest: "/launcher/felony.json",
         news: "/launcher/felony_news.json", exe: "FloppaFelony.exe", site: "https://felony.floppaland.com",
         notes: "https://felony.floppaland.com/updates/", in_work: true, home: "https://felony.floppaland.com",
-        kind: "Cops & robbers", color: [0xe0, 0x8a, 0x3c], icon: "🚓" },
+        kind: "Cops & robbers", color: [0xe0, 0x8a, 0x3c] },
     // 3.1 (2026-11-19): Floppa Mystery, public test (its own manifest + news on floppamining.com, like Felony)
     Game { id: "mystery", title: "Floppa Mystery", tag: "OPEN BETA", dir: "mystery", manifest: "/launcher/mystery.json",
         news: "/launcher/mystery_news.json", exe: "FloppaMystery.exe", site: "https://floppamining.com/download",
         notes: "https://floppamining.com/download/", in_work: true, home: "https://floppamystery.pages.dev",
-        kind: "Murder mystery", color: [0xd8, 0xdc, 0xe4], icon: "🔪" },
+        kind: "Murder mystery", color: [0xd8, 0xdc, 0xe4] },
     // 3.5.6 (2026-11-27): Floppa Bedwars, early test (manifest + news on floppamining.com, like Mystery); in-work: hidden
     // while "Hide in-work games" is on (the default)
     Game { id: "bedwars", title: "Floppa Bedwars", tag: "EARLY TEST", dir: "bedwars", manifest: "/launcher/bedwars.json",
         news: "/launcher/bedwars_news.json", exe: "FloppaBedwars.exe", site: "https://floppabedwars.pages.dev",
         notes: "https://floppabedwars.pages.dev/updates/", in_work: true, home: "https://floppabedwars.pages.dev",
-        kind: "Team battles", color: [0xff, 0x6b, 0x5e], icon: "⚔" },
+        kind: "Team battles", color: [0xff, 0x6b, 0x5e] },
 ];
 
 /// The games the launcher shows (3.1.6). With "Hide in-work games" on (the default), a game that is not finished
 /// yet only shows if it is already installed on this PC, so nobody loses a game they play by updating the launcher.
 pub fn shown_games(hide_in_work: bool) -> Vec<&'static Game> {
-    GAMES.iter().filter(|g| !(hide_in_work && g.in_work) || has_files(g.id)).collect()
+    // 3.6.1 (Kian): "Hide in-work games" hides them, installed or not (until 3.6.0 an installed one still showed).
+    // Their files stay; turning the setting off shows them again.
+    GAMES.iter().filter(|g| !(hide_in_work && g.in_work)).collect()
 }
 
 fn has_files(id: &str) -> bool {
